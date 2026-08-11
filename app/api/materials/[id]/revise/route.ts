@@ -53,7 +53,7 @@ export async function POST(
       );
     }
     // snapshot the state this call is about to overwrite
-    snapshotAndUpdate(material.id, "targeted revision", role, material.title, result.pack);
+    await snapshotAndUpdate(material.id, "targeted revision", role, material.title, result.pack);
     await logActivity(material.id, role, "revise", result.summary.slice(0, 140));
     return NextResponse.json({
       applied: true,

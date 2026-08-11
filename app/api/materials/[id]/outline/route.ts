@@ -69,7 +69,7 @@ export async function POST(
       })),
     });
     // snapshot the state this call is about to overwrite
-    snapshotAndUpdate(material.id, "outline replanned", role, material.title, next);
+    await snapshotAndUpdate(material.id, "outline replanned", role, material.title, next);
     await logActivity(material.id, role, "plan-outline", `${outline.activities.length} pages`);
     return NextResponse.json({ pack: next, outline });
   } catch (err) {

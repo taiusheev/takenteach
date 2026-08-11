@@ -142,7 +142,7 @@ export async function POST(
     .join(" — ");
 
   // status change + activity + (for a send-back) the correction land atomically
-  applyTransition(scope, {
+  await applyTransition(scope, {
     materialId: material.id,
     toStatus: transition.to,
     role,

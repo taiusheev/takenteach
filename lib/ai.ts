@@ -3121,7 +3121,35 @@ roundApplication — the sentence the debater says out loud, starting "Judge,". 
   let qa: QaSummary | undefined;
   let qaSkipped: string | undefined;
   yield { type: "stage-start", stage: "qa", label: STAGE_LABELS[8][1] };
-  if (autoQa) {
+  /**
+   * ALREADY GRADED THIS EXACT CONTENT? Then this stage is free.
+   *
+   * Every other stage in this generator can already be re-entered cheaply —
+   * foundation checks the mission, teacher-guide checks the timing plan, polish
+   * and validate both gate on the (free, deterministic) checklist, design checks
+   * the pack. QA was the one that re-ran its model calls unconditionally, which
+   * did not matter while a build was one long-lived request and matters a great
+   * deal now that a build is several: the route below stops when its time budget
+   * is spent and the client asks again, so any stage without a resume gate would
+   * be paid for on every leg.
+   *
+   * The fingerprint needed already existed. The stage stamps
+   * `contentQaJson.contentHash` precisely so the review gate in
+   * app/api/materials/[id]/transition/route.ts can tell a current QA report from
+   * a stale one; the same comparison answers "has QA already seen this pack".
+   * Any edit to the teaching content changes the hash and QA runs again, which
+   * is exactly the behaviour the review gate relies on.
+   */
+  const qaIsCurrent = (() => {
+    if (!pack.contentQaJson) return false;
+    try {
+      const prior = JSON.parse(pack.contentQaJson) as { contentHash?: string };
+      return prior.contentHash === packContentHash(pack);
+    } catch {
+      return false; // unparseable report → treat it as no report
+    }
+  })();
+  if (autoQa && !qaIsCurrent) {
     try {
       const pass = await qaRepairPass(pack, {
         review: (p) => reviewPackContent(subject, p),

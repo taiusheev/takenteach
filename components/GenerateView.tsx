@@ -91,6 +91,21 @@ export default function GenerateView({
     }
   }
 
+  /**
+   * ONE BUILD, SEVERAL REQUESTS.
+   *
+   * The server runs the build for a time budget and stops, because no
+   * serverless platform will hold a request open for the 7–22 minutes a real
+   * build takes (docs/DEPLOYMENT.md §2). Every stage it finished is already
+   * persisted, so continuing is just asking again — this loop does that until
+   * the build reports `done`.
+   *
+   * The loop is here rather than behind a "Continue" button on purpose: a
+   * paused leg is not a decision the teacher should have to make, or even
+   * notice. What they see is one build with a progress bar, exactly as before.
+   * The difference is that closing the laptop now costs the stage in flight
+   * instead of the whole build.
+   */
   async function start(fresh = false) {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -98,53 +113,28 @@ export default function GenerateView({
     setError("");
     setStages({});
     try {
-      const res = await fetch(`/api/materials/${materialId}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fresh }),
-        signal: ctrl.signal,
-      });
-      if (!res.ok || !res.body) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? `Generation failed (${res.status})`);
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let event;
-          try {
-            event = JSON.parse(line);
-          } catch {
-            continue; // skip a malformed/partial line rather than killing the live view
-          }
-          if (event.type === "stage-start") {
-            setStages((s) => ({ ...s, [event.stage]: "running" }));
-          } else if (event.type === "stage-done") {
-            setStages((s) => ({ ...s, [event.stage]: "done" }));
-            if (event.pack) setPack(event.pack);
-            if (event.repair) setRepair(event.repair);
-            if (event.qa) setQa(event.qa);
-          } else if (event.type === "done") {
-            if (event.pack) setPack(event.pack);
-            if (event.repair) setRepair(event.repair);
-            if (event.qa) setQa(event.qa);
-            setPhase("done");
-          } else if (event.type === "usage") {
-            setUsage(event.summary ?? "");
-            const u = event.usage;
-            const seen = (u?.input ?? 0) + (u?.cacheWrite ?? 0) + (u?.cacheRead ?? 0);
-            setCacheHit(seen > 0 ? (u.cacheRead ?? 0) / seen : null);
-          } else if (event.type === "error") {
-            throw new Error(event.error);
-          }
+      /* Stage state is NOT reset between legs — the bar would jump back to zero
+         every time the server handed back. Only `start` clears it, above. */
+      for (let leg = 0; ; leg++) {
+        const { complete, progressed } = await runLeg({
+          fresh: fresh && leg === 0, // a rebuild wipes once, not on every leg
+          resume: leg > 0,
+          signal: ctrl.signal,
+        });
+        if (complete) break;
+        if (ctrl.signal.aborted) break;
+        /* STALL GUARD. A leg that finished no stage and did not complete has
+           made no progress, so asking again would produce the same nothing —
+           forever, and each attempt can cost real money. This is what a stage
+           too slow for the platform's ceiling looks like from here, and it has
+           to surface as a message rather than as a silent loop. */
+        if (!progressed) {
+          throw new Error(
+            "The build stopped without finishing a stage — the next stage is " +
+              "likely too slow for this deployment's time limit. Everything " +
+              "built so far has been saved; try again, or build this pack " +
+              "locally."
+          );
         }
       }
       setPhase((p) => (p === "running" ? "done" : p));
@@ -156,6 +146,80 @@ export default function GenerateView({
         setError(err instanceof Error ? err.message : "Generation failed");
       }
     }
+  }
+
+  /**
+   * Run one leg.
+   *
+   * `complete` — the build reached `done`.
+   * `progressed` — at least one stage finished, so asking again is worthwhile.
+   */
+  async function runLeg(opts: {
+    fresh: boolean;
+    resume: boolean;
+    signal: AbortSignal;
+  }): Promise<{ complete: boolean; progressed: boolean }> {
+    const res = await fetch(`/api/materials/${materialId}/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fresh: opts.fresh, resume: opts.resume }),
+      signal: opts.signal,
+    });
+    if (!res.ok || !res.body) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error ?? `Generation failed (${res.status})`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let complete = false;
+    let progressed = false;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let event;
+        try {
+          event = JSON.parse(line);
+        } catch {
+          continue; // skip a malformed/partial line rather than killing the live view
+        }
+        if (event.type === "stage-start") {
+          setStages((s) => ({ ...s, [event.stage]: "running" }));
+        } else if (event.type === "stage-done") {
+          setStages((s) => ({ ...s, [event.stage]: "done" }));
+          progressed = true;
+          if (event.pack) setPack(event.pack);
+          if (event.repair) setRepair(event.repair);
+          if (event.qa) setQa(event.qa);
+        } else if (event.type === "done") {
+          if (event.pack) setPack(event.pack);
+          if (event.repair) setRepair(event.repair);
+          if (event.qa) setQa(event.qa);
+          setPhase("done");
+          complete = true;
+        } else if (event.type === "paused") {
+          // Expected: the leg spent its budget. The caller asks for another.
+        } else if (event.type === "usage") {
+          setUsage(event.summary ?? "");
+          const u = event.usage;
+          const seen = (u?.input ?? 0) + (u?.cacheWrite ?? 0) + (u?.cacheRead ?? 0);
+          setCacheHit(seen > 0 ? (u.cacheRead ?? 0) / seen : null);
+        } else if (event.type === "error") {
+          throw new Error(event.error);
+        }
+      }
+    }
+    /* A leg that ended without saying either `done` or `paused` was cut off —
+       the platform's own timeout, a dropped connection, a proxy giving up.
+       Treated as "more to do" rather than as success: everything finished is
+       persisted, so the next leg resumes, and the alternative is telling the
+       teacher their pack is built when it is not. */
+    return { complete, progressed };
   }
 
   function stop() {

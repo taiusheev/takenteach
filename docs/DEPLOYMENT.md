@@ -177,7 +177,7 @@ Each step leaves a working application.
 | **1. Repo** ✅ | `git init`, `.gitattributes`, `.env.example`, real README | Everything else deploys from it. Local commits only — no remote configured, nothing pushed. |
 | **2a. Postgres layer** ✅ | `lib/pg.ts` + 11 tests | Proven before anything is ported onto it. |
 | **2b. Postgres port** ✅ | Ported `lib/db.ts` + `lib/auth/store.ts`; async-ified 114 call sites; `scripts/db-import.mjs`; tenancy re-proved on Postgres | The biggest mechanical change, and the tenancy test proves it landed intact. |
-| **3. Stage the build** | One request per generation stage; measure each against 60 s | The blocker that is *not* fixed by step 2. |
+| **3. Stage the build** ✅ | A build runs in timed legs; the client asks again until it is done | The blocker that is *not* fixed by step 2. |
 | **4. De-globalise** | Budget mode to the database; park the overnight runner | Small, and step 3 makes it obvious what is left. |
 | **5. Email** | Implement Resend in `lib/mail.ts` (the seam is already there) | Password resets stop silently dropping. |
 | **6. Deploy** | Vercel project, env vars, Cloudflare records, verify on `takenteach.com` | Last, because everything above must be true first. |
@@ -276,6 +276,73 @@ compile, and the fix is `await Promise.all(xs.map(async …))`. That pattern app
 `app/rounds`, `app/style-kits` and `app/review`, and each is an N+1 — one query per row.
 Harmless at this size and worth folding into a single `GROUP BY` before the library is
 large. It is not a correctness problem and was deliberately left out of this change.
+
+## 7d. Step 3 — the build now runs in legs
+
+### The measurement §2 asked for, and what it says
+
+Taken from the activity log's own `quick-build-start` → `quick-build-done`
+pairs — thirteen real builds, not an estimate:
+
+| | wall clock |
+|---|---|
+| fastest full build | 6.2 min |
+| median | **7.3 min** |
+| the last four (the elite packs) | 14.8 / 20.3 / 21.8 / 22.1 min |
+| model calls per build | 12–14 |
+
+**§2 understated the risk.** Ten stages across a 20-minute build is ~120 s of
+stage on average, and `activities-1`/`activities-2` batch several calls each, so
+they are well above it. One-request-per-stage does not fit a 60 s ceiling and
+never would have. The builds are also getting *longer* as the pack standard
+rises, so this gap widens rather than closes.
+
+### What was built instead
+
+Not `?stage=foundation`. A build runs for a **time budget** and stops at the
+next stage boundary; the client asks again; repeat until done. One knob,
+`BUILD_LEG_BUDGET_MS` (default 45 s), set to whatever the deployment's real
+ceiling is.
+
+A budget beats a stage-per-request on the same evidence that killed the original
+design — the stages are wildly uneven. Several resume for free in microseconds
+while one is minutes. A budget batches the cheap ones into a single leg and
+gives an expensive one a leg to itself, without anyone having to predict which
+is which.
+
+- `lib/build-leg.ts` — `consumeLeg()`, with the clock injected. Extracted from
+  the route because it is the piece that decides whether a build ever finishes,
+  and a real build costs ~$5 and 20 minutes, so "run one and see" is not a
+  verification anybody repeats. `lib/build-leg.test.ts` drives it with a fake
+  generator: 6 tests, including that a stage already started is never truncated
+  (the budget is a floor on leg length, not a ceiling) and that a stage is
+  persisted *before* the client is told it finished.
+- **The `qa` stage became re-entrant.** It was the only stage that re-ran its
+  model calls unconditionally, which cost nothing when a build was one request
+  and would have been paid on every leg. The fingerprint it needed already
+  existed — it stamps `contentQaJson.contentHash` so the review gate can spot a
+  stale report, and the same comparison answers "has QA already seen this pack".
+- **Snapshot and `quick-build-start` moved behind `resume: false`,** so a
+  22-minute build still writes one undo point rather than thirty — which would
+  otherwise have pushed the version the teacher actually wanted past
+  `VERSION_LIMIT`.
+- **A stall guard in the client.** A leg that finishes no stage means the next
+  stage does not fit the ceiling; asking again would loop forever and each turn
+  can cost money. It surfaces as a sentence instead.
+
+### What this does and does not buy
+
+It does **not** make a 22-minute build complete on a 60 s ceiling — nothing short
+of splitting the model calls themselves would, and that was explicitly not worth
+it for an MVP. What it buys is that the build **degrades instead of failing**:
+every finished stage is on disk, an interrupted build resumes from exactly where
+it stopped, and closing the laptop costs the stage in flight rather than the
+hour. On a generous ceiling it simply completes.
+
+For a demo, the honest advice is to build packs locally — where there is no
+timeout at all — and let the deployment serve the library. Building is the one
+thing free serverless is bad at; showing nine finished packs is what the domain
+is for.
 
 ## 7b. Running it locally
 

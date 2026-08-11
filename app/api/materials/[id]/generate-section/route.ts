@@ -89,7 +89,7 @@ export async function POST(
       exemplar
     );
     // snapshot the state this call is about to overwrite
-    snapshotAndUpdate(material.id, "section regenerated", role, material.title, pack);
+    await snapshotAndUpdate(material.id, "section regenerated", role, material.title, pack);
     await logActivity(
       material.id,
       role,

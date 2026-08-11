@@ -8,13 +8,69 @@ import { LessonPack } from "@/lib/lesson-pack-schema";
 import { loadEditableMaterial } from "@/lib/api/guards";
 import { readBody } from "@/lib/api/request";
 import { withUsageMeter, describeUsage } from "@/lib/usage-meter";
+import { consumeLeg } from "@/lib/build-leg";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 3600;
+
+/**
+ * ── A BUILD IS NOW SEVERAL REQUESTS, NOT ONE ─────────────────────────────
+ *
+ * This route declared `maxDuration = 3600` and held one stream open for the
+ * whole build. Measured against the real corpus, a build runs 6–22 minutes
+ * (median 7.3, and the last four elite packs 15–22) across 12–14 model calls,
+ * so no serverless platform was ever going to serve it — see docs/DEPLOYMENT.md
+ * §2. It is also simply a bad experience: closing the laptop or losing school
+ * wifi killed the connection and the progress display with it.
+ *
+ * So the route now runs the build for a TIME BUDGET and stops. It persists
+ * everything finished, says whether more remains, and the client asks again.
+ *
+ * WHY A TIME BUDGET RATHER THAN "ONE STAGE PER REQUEST". The obvious design is
+ * `?stage=foundation`, one stage per call. A budget is strictly better here and
+ * no more complex: stages are wildly uneven — several resume for free in
+ * microseconds while `activities-1` on an elite pack is minutes — so a
+ * stage-per-request spends ten round trips to skip work that costs nothing,
+ * and still cannot promise any single request fits. A budget adapts by itself:
+ * cheap stages batch into one leg, an expensive one gets a leg to itself, and
+ * the knob is the deployment's real constraint rather than a guess about which
+ * stage is slow.
+ *
+ * WHAT MAKES THIS SAFE is that `generateLessonPack` is re-entrant: the pack is
+ * persisted after every stage and each stage checks whether its work is already
+ * present, so re-entering skips to the first unfinished stage without paying
+ * for the ones behind it. QA was the one exception and now carries the same
+ * gate — see the note on `qaIsCurrent` in lib/ai.ts.
+ *
+ * A LEG THAT IS KILLED ANYWAY still only loses the stage in flight. That is the
+ * property worth having on a free tier whose ceiling we do not control: the
+ * build degrades to "click again to continue" instead of failing.
+ */
+export const maxDuration = 300;
+
+/**
+ * How long one leg may run before it stops and hands back.
+ *
+ * Deliberately below `maxDuration`, because the budget is only checked BETWEEN
+ * stages — a stage started at 04:59 runs to completion — so the gap is the
+ * headroom for the longest single stage. Set `BUILD_LEG_BUDGET_MS` per
+ * deployment: lower it on a tighter ceiling, raise it on a longer one. It
+ * changes only how many legs a build takes, never the result.
+ */
+const LEG_BUDGET_MS = Number(process.env.BUILD_LEG_BUDGET_MS ?? 45_000);
 
 const bodySchema = z.object({
   /** "Regenerate all" — clear the pack and rebuild rather than resume. */
   fresh: z.boolean().default(false),
+  /**
+   * This is a continuation of a build already in progress, not a new one.
+   *
+   * Set by the client on every leg after the first. It suppresses the things
+   * that must happen once per BUILD rather than once per request — the undo
+   * snapshot and the start marker in the activity log. Without it a 22-minute
+   * build would write thirty snapshots and the material's history would read as
+   * thirty separate builds.
+   */
+  resume: z.boolean().default(false),
   /**
    * Content QA + auto-repair as the last build stage. On by default: it adds a
    * few minutes to the build and removes the two or three human QA/revise rounds
@@ -55,7 +111,7 @@ export async function POST(
   if (!parsed.ok) return parsed.response;
   // "Regenerate all" clears the pack for a clean rebuild; a plain build resumes
   // past whatever stages an interrupted run already completed.
-  const { fresh, autoQa, autoDesign } = parsed.data;
+  const { fresh, autoQa, autoDesign, resume } = parsed.data;
   // Which models the stages run on, and how hard they think. Set for the whole
   // run before any stage starts, so the estimate the founder just read on the
   // Build tab and the calls this build makes come from the same table.
@@ -66,16 +122,24 @@ export async function POST(
     async start(controller) {
       const send = (obj: unknown) =>
         controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
+      /** Did the generator reach `done`, or did this leg run out of budget? */
+      let finished = false;
       try {
-        // One snapshot per RUN, not per stage: a build writes eight times, and
-        // the state worth keeping is the one that existed before it started —
-        // especially for a fresh rebuild, which wipes everything first.
-        snapshotMaterial(
-          material.id,
-          fresh ? "full rebuild" : "AI build",
-          role
-        );
-        await logActivity(material.id, role, "quick-build-start");
+        // One snapshot per BUILD, not per stage and — since a build became
+        // several requests — not per leg either. The state worth keeping is the
+        // one that existed before the build started, especially for a fresh
+        // rebuild, which wipes everything first. A continuation must not
+        // snapshot: it would bury the real undo point under thirty copies of
+        // work in progress, and VERSION_LIMIT would then evict the only version
+        // the teacher actually wanted back.
+        if (!resume) {
+          await snapshotMaterial(
+            material.id,
+            fresh ? "full rebuild" : "AI build",
+            role
+          );
+          await logActivity(material.id, role, "quick-build-start");
+        }
         // Everything the build grounds itself on — the kit, series siblings, a
         // remix's inherited outline, classroom evidence, the exemplar, recurring
         // corrections and the design memory. Gathered by the SAME function the
@@ -129,9 +193,10 @@ export async function POST(
         // more importantly, whether the shared prompt cache was actually hit.
         await withUsageMeter(
           async () => {
-            for await (const event of stream) {
-              if (req.signal.aborted) break;
-              if (event.type === "stage-done" || event.type === "done") {
+            const leg = await consumeLeg(stream, {
+              budgetMs: LEG_BUDGET_MS,
+              aborted: () => req.signal.aborted,
+              onStageDone: async (event) => {
                 if (event.pack) {
                   await updateMaterialContent(material.id, material.title, event.pack);
                 }
@@ -147,30 +212,48 @@ export async function POST(
                     event.skipped
                   );
                 }
-              }
+              },
               // don't re-send the full pack on every event; the client refetches
-              send({
-                type: event.type,
-                stage: event.stage,
-                label: event.label,
-                pack: event.pack,
-                repair: event.repair,
-                qa: event.qa,
-                skipped: event.skipped,
-              });
-            }
+              onEvent: (event) =>
+                send({
+                  type: event.type,
+                  stage: event.stage,
+                  label: event.label,
+                  pack: event.pack,
+                  repair: event.repair,
+                  qa: event.qa,
+                  skipped: event.skipped,
+                }),
+            });
+            finished = leg.finished;
           },
           async (totals) => {
             send({ type: "usage", usage: totals, summary: describeUsage(totals) });
-            await logActivity(
-              material.id,
-              role,
-              "quick-build-usage",
-              describeUsage(totals)
-            );
+            /* Only when this leg actually spent something. A leg that just
+               skipped its way to the first unfinished stage made no model calls,
+               and a row saying "0 calls · ~$0.00" for each of those turns the
+               cost history — which is the ground truth for what a build costs —
+               into something you have to filter before you can read it. */
+            if (totals.calls > 0) {
+              await logActivity(
+                material.id,
+                role,
+                "quick-build-usage",
+                describeUsage(totals)
+              );
+            }
           }
         );
-        await logActivity(material.id, role, "quick-build-done");
+        if (finished) {
+          await logActivity(material.id, role, "quick-build-done");
+        } else {
+          /* Out of budget with stages still to run. The client asks again with
+             `resume: true`; everything finished is already persisted, so the
+             next leg picks up exactly here. Sent as an event rather than an
+             error because nothing has gone wrong — this is the build working
+             as designed. */
+          send({ type: "paused", reason: "leg-budget" });
+        }
       } catch (err) {
         send({
           type: "error",

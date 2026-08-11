@@ -37,7 +37,7 @@ export async function POST(
       designNote: design.note,
     });
     // snapshot the state this call is about to overwrite
-    snapshotAndUpdate(material.id, "design system generated", role, material.title, next);
+    await snapshotAndUpdate(material.id, "design system generated", role, material.title, next);
     await logActivity(material.id, role, "design-system", design.note);
     return NextResponse.json({ pack: next, note: design.note });
   } catch (err) {
