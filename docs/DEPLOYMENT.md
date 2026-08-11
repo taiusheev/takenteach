@@ -179,8 +179,8 @@ Each step leaves a working application.
 | **2b. Postgres port** ✅ | Ported `lib/db.ts` + `lib/auth/store.ts`; async-ified 114 call sites; `scripts/db-import.mjs`; tenancy re-proved on Postgres | The biggest mechanical change, and the tenancy test proves it landed intact. |
 | **3. Stage the build** ✅ | A build runs in timed legs; the client asks again until it is done | The blocker that is *not* fixed by step 2. |
 | **4. De-globalise** | Budget mode to the database; park the overnight runner | Small, and step 3 makes it obvious what is left. |
-| **5. Email** | Implement Resend in `lib/mail.ts` (the seam is already there) | Password resets stop silently dropping. |
-| **6. Deploy** | Vercel project, env vars, Cloudflare records, verify on `takenteach.com` | Last, because everything above must be true first. |
+| **5. Email** ✅ | Resend implemented in `lib/mail.ts`, 7 tests | Password resets stop silently dropping. |
+| **6. Deploy** | Vercel project, env vars, Cloudflare records, verify on `takenteach.com` | Last, because everything above must be true first. **Code side is ready; the runbook is §7f.** |
 
 **DNS at Cloudflare** (step 6): `CNAME app → cname.vercel-dns.com` if the product lives
 at `app.takenteach.com`, or an apex `A`/`ALIAS` to Vercel if it lives at the root. My
@@ -344,6 +344,140 @@ timeout at all — and let the deployment serve the library. Building is the one
 thing free serverless is bad at; showing nine finished packs is what the domain
 is for.
 
+## 7e. Step 5 — email
+
+`lib/mail.ts` sends through Resend. The seam did its job: adding a transport
+touched one file and no call site.
+
+**No SDK.** Resend publishes an npm package; this is a `fetch` POST with a
+bearer token. The package would add a dependency, a version to track and a
+bundle shipped into every serverless function, in exchange for wrapping fifteen
+lines — the same trade that put scrypt in `lib/auth/password.ts` rather than
+bcrypt.
+
+| environment | behaviour |
+|---|---|
+| development | logs to the console, **including the reset link**, so the flow is testable without an inbox |
+| production, no `RESEND_API_KEY` | logs that it dropped the message, returns `ok: false` |
+| production, key set | sends |
+| `MAIL_FORCE_SEND=1` | sends from a dev machine — for proving a new sending domain works |
+
+Three properties are tested because each is a way this could hurt someone:
+
+1. **It never sends from a development machine**, and never prints a live reset
+   link into a production log.
+2. **It never throws.** A transport failure is `ok: false`. The reset route
+   answers the browser identically whether the address exists or not — saying
+   "we couldn't send that" would also say "this account is real" — so an
+   exception here would turn a deliverability problem into an
+   account-enumeration oracle *and* a 500.
+3. **The reset link never reaches an error log.** It is a live credential;
+   anyone reading the log could take the account. Same reason sessions store a
+   hash rather than a token. The log gets the status and Resend's message.
+
+## 7f. Step 6 — the deploy runbook
+
+**The code is ready. Everything below needs accounts and secrets, so it is yours
+to run — I can't create accounts or enter credentials, and no key should ever be
+pasted into a chat.** Every value goes into the provider's own dashboard.
+
+Done as part of this step:
+
+- **Next 16.2.10 → 16.3.0**, which is what §7b asked for: the proxy/middleware
+  bypass, the rewrite SSRF, the postcss path traversal and the sharp/libvips
+  advisories are all gone. `npm audit` now reports **0 vulnerabilities** (a plain
+  `npm audit fix` cleared three further transitive ones). Type-check, lint, 111
+  tests and a production build all pass on it.
+- One thing the bump surfaced: a new lint rule objects to
+  `window.location.assign` in `LogoutButton`. It is **deliberately** kept and the
+  rule disabled with the reason — `router.push()` is a client-side transition
+  that preserves Next's router cache, which holds the rendered payloads of the
+  pages the user was signed in to. Obeying the rule would let Back re-display
+  authenticated pages after sign-out.
+
+### The order, and why
+
+**1. Supabase.** Create the project. Take the **transaction pooler** string
+(port 6543), not the direct connection (5432) — Vercel runs many short-lived
+instances each opening their own connections, and the direct limit is reached
+almost immediately, surfacing as unrelated-looking 500s.
+
+**2. Schema and data, before any deploy.** From your machine, with
+`DATABASE_URL` set to that string in your shell (not committed anywhere):
+
+```bash
+npm run db:migrate && npm run db:import
+```
+
+`db:import` refuses a non-empty target, verifies every table count by reading it
+back, and fast-forwards each identity sequence past the imported ids. Do this
+*before* the first deploy so the site is never live against empty tables.
+
+**3. GitHub.** There is still **no remote and nothing pushed** — the repository
+is local commits only. Create the repo yourself and push; `.gitignore` already
+excludes `data/*.db`, `.pglite/` and `.env*`, so no library and no credential
+goes up.
+
+**4. Vercel.** Import the repo. Environment variables, all set in Vercel's
+dashboard:
+
+| | |
+|---|---|
+| `DATABASE_URL` | the pooler string from step 1 |
+| `ANTHROPIC_API_KEY` | moved out of your local `.env.local` |
+| `RESEND_API_KEY` | step 5 |
+| `MAIL_FROM` | `TakenTeach <noreply@takenteach.com>` |
+| `BUILD_LEG_BUDGET_MS` | optional; lower it if builds get cut off |
+
+`NODE_ENV` is set by Vercel. Do **not** set `PGLITE_PATH` — with no
+`DATABASE_URL` the app refuses to start in production rather than come up
+against an empty in-memory database, which is the failure that would otherwise
+look exactly like every lesson having vanished.
+
+**5. Resend.** Add `takenteach.com` and let Resend generate its records — a
+`TXT` for DKIM, an SPF `TXT`, and an MX for the bounce subdomain. The values are
+generated per domain, so take them from Resend's screen; add them at Cloudflare
+as **DNS-only (grey cloud)**. Then verify delivery *before* relying on it:
+
+```bash
+MAIL_FORCE_SEND=1 npm run dev
+```
+
+and use Forgot Password against your own address.
+
+**6. Cloudflare DNS.** My recommendation stands from §7 — **apex for the
+marketing page, `app.` for the product.** For the product host, the record
+Vercel shows you when you add the domain:
+
+| type | name | value |
+|---|---|---|
+| `CNAME` | `app` | `cname.vercel-dns.com` |
+
+Take the exact target from Vercel's domain screen rather than from here; it has
+changed before. If you put the product on the apex instead, Vercel gives an `A`
+record for it.
+
+**Set every Vercel record to DNS-only (grey cloud).** Proxying through
+Cloudflare on top of Vercel causes redirect loops and breaks Vercel's
+certificate issuance — this is the single most common way this deploy goes
+wrong.
+
+**7. Verify on the domain**, in this order, because each depends on the last:
+sign in → the library lists 9 packs → open one → print view → Forgot Password
+arrives in a real inbox.
+
+### What will not work well on the free tier, and is fine
+
+**Building a pack.** A build is 7–22 minutes; step 3 makes it run in legs and
+resume rather than fail, but on a tight function ceiling a slow stage can still
+stall, and the client says so rather than looping. **For a demo, build packs
+locally — where there is no timeout — and let the deployment serve the library.**
+Nine finished packs is what the domain is for.
+
+**The overnight batch runner** is still module-level state and still cannot work
+on serverless (§4). It is untouched and should not be exercised on the
+deployment.
+
 ## 7b. Running it locally
 
 The database is no longer a file the app creates on demand. With no `DATABASE_URL`,
@@ -375,15 +509,21 @@ the port so the two changes stay reviewable independently.
 ## 8. What I need from you
 
 Nothing secret, ever — every key below is pasted by you into Vercel's or Supabase's own
-dashboard, not into this chat.
+dashboard, not into this chat. **Steps 1–5 of the port are done; all four items below are
+now the only thing between the code and a live domain.** The ordered runbook is §7f.
 
 1. **A Supabase project** (free tier, region closest to your users). I need to know it
    exists; you put the connection string in Vercel's env vars as `DATABASE_URL`.
 2. **A Resend account** with `takenteach.com` verified. That verification adds DNS
-   records at Cloudflare — I will list exactly which. Key goes in as `RESEND_API_KEY`.
+   records at Cloudflare — Resend generates them per domain, so take the values from its
+   screen; §7f says where they go and that they must be grey-cloud.
 3. **Your `ANTHROPIC_API_KEY`** moved into Vercel's env vars. It is currently in
    `.env.local`, which is gitignored and stays that way.
-4. **A decision on apex vs `app.`** — see §7.
+4. **A decision on apex vs `app.`** — see §7. My recommendation is apex for the marketing
+   page, `app.` for the product.
+
+Also needed and not a secret: **a GitHub remote.** The repository is still local commits
+only, with nothing pushed anywhere.
 5. ~~**Confirmation on §6** (keep the existing auth) before I start step 2.~~ Step 2 is
    done and it kept the existing auth, which was the recommendation and the lower-risk
    path — the scrypt hashing, the session rows and the DAL all moved to Postgres

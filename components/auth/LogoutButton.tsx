@@ -34,7 +34,17 @@ export default function LogoutButton({
           /* Even if the request failed, go to the login page. The session may
              or may not be gone server-side, but leaving someone stuck on a page
              they just asked to leave is the worse outcome — and the next
-             request will find out either way. */
+             request will find out either way.
+
+             A FULL DOCUMENT NAVIGATION, deliberately, which is why the lint rule
+             is disabled rather than obeyed. `router.push()` is a client-side
+             transition: it keeps Next's router cache, and that cache holds the
+             rendered RSC payloads of the pages this person was just signed in
+             to. Signing out and then navigating Back would re-display them from
+             memory — the data is gone from the server's point of view and still
+             on the screen. Discarding the whole document is the only way to be
+             sure nothing authenticated survives the logout. */
+          // eslint-disable-next-line @next/next/no-location-assign-relative-destination
           window.location.assign("/login");
         }
       }}
