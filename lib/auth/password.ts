@@ -9,8 +9,9 @@ import { promisify } from "node:util";
  * PASSWORD HASHING — scrypt, from node:crypto.
  *
  * No dependency. That is the point, not an accident: bcrypt and argon2 are both
- * native modules needing node-gyp, this project is developed on Windows, and
- * better-sqlite3 is already one native build's worth of risk. scrypt is a real
+ * native modules needing node-gyp, this project is developed on Windows, and it
+ * has just spent a port getting rid of the one native build it had
+ * (better-sqlite3, which a serverless host could not run). scrypt is a real
  * memory-hard KDF (RFC 7914), it ships in the Node standard library, and it is
  * on OWASP's list of acceptable choices. The alternative is not "a better hash",
  * it is "a build that fails on a fresh machine".

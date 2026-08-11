@@ -38,7 +38,7 @@ export async function POST(
   const { id } = await ctx.params;
   const roundId = routeId(id);
   if (roundId === null) return notFound("Round not found");
-  const round = getRound(scope, roundId);
+  const round = await getRound(scope, roundId);
   if (!round) return notFound("Round not found");
   const parsed = await readBody(req, bodySchema);
   if (!parsed.ok) return parsed.response;
@@ -51,7 +51,7 @@ export async function POST(
     );
   }
 
-  const submissionId = submitBallot(scope, {
+  const submissionId = await submitBallot(scope, {
     roundId: round.id,
     judgeName: body.judgeName?.trim() ?? "",
     role,

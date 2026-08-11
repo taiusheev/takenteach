@@ -39,24 +39,34 @@ A production build is a snapshot, so it doesn't pick up edits by itself. Run
 
 ## Back up the library
 
-Every lesson pack, design, student observation and judged round lives in a
-single file: `data\ascent.db`. Running locally means **that file is the only
-copy in existence.**
+> **⚠ Read this before running `backup.mjs` again.** The app has moved off
+> SQLite and onto Postgres (docs/DEPLOYMENT.md §7a). **`data\ascent.db` is no
+> longer the live database** — it is a frozen copy of the library as it stood at
+> the moment of the port, and nothing writes to it any more. `backup.mjs` still
+> works and still snapshots that file, so it will keep producing backups that
+> look fine and contain no new work. Treat `data\ascent.db` as an archive to
+> keep, not as the thing to protect.
+>
+> Where the live data is now:
+>
+> | | Live database |
+> |---|---|
+> | Locally | the `PGLITE_PATH` directory (`.pglite\` by default) |
+> | Deployed | Supabase, which takes its own daily backups on the free tier |
+>
+> A replacement for `backup.mjs` — `pg_dump` against whichever of those is
+> live — belongs with step 6 (deploy), and until then the old snapshots plus
+> `data\ascent.db` still hold everything up to the port.
+
+To set up or refresh a local database:
 
 ```
-node scripts/backup.mjs
+npm run db:migrate
+npm run db:import
 ```
 
-Writes a timestamped snapshot to `backups\`, keeps the last 20. Point it
-somewhere synced and you have off-machine copies for free:
-
-```
-node scripts/backup.mjs "C:\Users\<you>\OneDrive\ascent-backups"
-```
-
-This uses SQLite's `VACUUM INTO`, not a file copy — the database runs in WAL
-mode, so copying `ascent.db` while the site is running can silently miss the
-most recent edits. Worth running weekly, and before anything drastic.
+The first creates the tables; the second copies `data\ascent.db` into them with
+every id preserved, and refuses to run twice unless given `--force`.
 
 ---
 

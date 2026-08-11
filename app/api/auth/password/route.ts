@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
+import { transaction } from "@/lib/pg";
 import { badRequest, readBody } from "@/lib/api/request";
 import { changePasswordSchema } from "@/lib/auth/schema";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
   if (!parsed.ok) return parsed.response;
   const { currentPassword, password } = parsed.data;
 
-  const user = getUser(gate.session.userId);
+  const user = await getUser(gate.session.userId);
   if (!user) return badRequest("That account no longer exists.");
 
   if (!(await verifyPassword(currentPassword, user.password_hash))) {
@@ -50,16 +50,16 @@ export async function POST(req: NextRequest) {
   /* Same revocation as a reset: every other session for this user dies. If the
      reason for changing a password is that someone else had it, the session
      they are sitting in is exactly what needs to stop working. */
-  getDb().transaction(() => {
-    setPassword(user.id, passwordHash, { mustChange: false });
-    invalidateResetsFor(user.id);
-    deleteAllSessionsFor(user.id);
-  })();
+  await transaction(async () => {
+    await setPassword(user.id, passwordHash, { mustChange: false });
+    await invalidateResetsFor(user.id);
+    await deleteAllSessionsFor(user.id);
+  });
 
   /* ...including this one — so a fresh session is issued immediately, or the
      user would be signed out by their own successful password change. */
   const res = NextResponse.json({ ok: true, next: "/" });
-  startSession(res, {
+  await startSession(res, {
     userId: user.id,
     activeOrgId: gate.session.orgId,
     remember: false,

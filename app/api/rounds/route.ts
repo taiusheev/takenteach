@@ -46,13 +46,13 @@ export async function POST(req: NextRequest) {
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
 
-  const ballot = getMaterial(scope, body.ballotId);
+  const ballot = await getMaterial(scope, body.ballotId);
   if (!ballot || ballot.type !== "judge-ballot") {
     return badRequest("Pick a Judge Ballot template to run this round from.");
   }
 
   const content = ballot.content as JudgeBallot;
-  const id = createRound(scope, {
+  const id = await createRound(scope, {
     ballotId: ballot.id,
     label: body.label,
     // snapshot the resolution so later template edits don't rewrite history

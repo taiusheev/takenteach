@@ -40,6 +40,18 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * WASM, in-process — so `npm test` stays offline and needs no database server,
  * which the existing suite's whole design depends on. Both satisfy `Driver`
  * below, and lib/db.ts cannot tell them apart.
+ *
+ * ── 4. bigint COMES BACK AS A NUMBER ─────────────────────────────────────
+ * The two drivers disagree out of the box and it is the most dangerous kind of
+ * disagreement: `pg` decodes int8 as a STRING, PGlite as a number. Every id in
+ * the schema is `bigint`, and so is every `COUNT(*)`.
+ *
+ * Left alone, the whole test suite would pass on PGlite while production
+ * returned `"13"` for `material.id` — and nothing would throw. `id === 13` is
+ * false, `forked_from === id` never matches, and `count > 0` compares a string
+ * to a number. A test suite that cannot see the bug it is there to catch is
+ * worse than no test suite, so the drivers are made to agree HERE rather than
+ * at each of the places that would otherwise have to remember.
  */
 
 export interface QueryResult {
@@ -98,6 +110,29 @@ export function toPositional(sql: string): string {
     out += ch;
   }
   return out;
+}
+
+/* ── bigint ───────────────────────────────────────────────────────────────── */
+
+/**
+ * int8 → number, refusing to lie about it.
+ *
+ * `Number("9007199254740993")` returns 9007199254740992 without complaint, so a
+ * plain `Number` parser would silently corrupt an id rather than fail. Nothing
+ * here will reach 2^53 — that is nine quadrillion lessons — but the check costs
+ * one comparison and turns an impossible-to-diagnose wrong answer into an
+ * exception naming the value.
+ */
+function asSafeInteger(raw: string | null): number | null {
+  if (raw === null) return null;
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n)) {
+    throw new Error(
+      `Postgres returned ${raw}, which is past JavaScript's safe integer range. ` +
+        `lib/pg.ts decodes bigint as a number; this value needs BigInt handling.`
+    );
+  }
+  return n;
 }
 
 /* ── Transaction context ──────────────────────────────────────────────────── */
@@ -192,8 +227,13 @@ async function createDriver(): Promise<Driver> {
     return pgliteDriver(process.env.PGLITE_PATH ?? "memory://");
   }
 
-  const { Pool } = await import("pg");
+  const { Pool, types } = await import("pg");
   const local = /localhost|127\.0\.0\.1/.test(url);
+
+  /* Make int8 a number, matching PGlite — see note 4 at the top of this file.
+     Process-wide and set before the first query, which is the only way pg
+     exposes it. */
+  types.setTypeParser(types.builtins.INT8, asSafeInteger);
 
   const pool = new Pool({
     connectionString: url,

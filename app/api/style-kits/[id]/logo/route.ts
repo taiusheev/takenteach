@@ -70,6 +70,6 @@ export async function PUT(
   }
 
   const config = parseKitConfig({ ...kit.config, logoDataUrl: raw });
-  updateStyleKit(scope, kit.id, kit.name, config, kit.locked_fields);
+  await updateStyleKit(scope, kit.id, kit.name, config, kit.locked_fields);
   return NextResponse.json({ ok: true, logoDataUrl: raw });
 }

@@ -27,7 +27,7 @@ export async function DELETE(
   if (role !== "founder" && role !== "coach") {
     return forbidden("Only founders and coaches can delete materials.");
   }
-  const children = countForksOf(scope, material.id);
+  const children = await countForksOf(scope, material.id);
   if (children > 0) {
     return conflict(
       `${children} material(s) were forked from this one — deleting it would orphan their lineage.`
@@ -35,13 +35,13 @@ export async function DELETE(
   }
   // A ballot can be judged while still a draft, so this is reachable from the
   // draft-only rule above rather than blocked by it.
-  const rounds = countRoundsFrom(scope, material.id);
+  const rounds = await countRoundsFrom(scope, material.id);
   if (rounds > 0) {
     return conflict(
       `${rounds} round(s) were run from this ballot — deleting it would orphan their results.`
     );
   }
-  deleteMaterial(scope, material.id);
+  await deleteMaterial(scope, material.id);
   return NextResponse.json({ ok: true });
 }
 
@@ -76,7 +76,7 @@ export async function PUT(
       issues: parsed.error.issues,
     });
   }
-  updateMaterialContent(
+  await updateMaterialContent(
     material.id,
     body.data.title || material.title,
     parsed.data
@@ -87,7 +87,7 @@ export async function PUT(
       material.type,
       parsed.data,
       material.subject,
-      getKitForMaterial(scope, material.style_kit_id)?.config
+      (await getKitForMaterial(scope, material.style_kit_id))?.config
     ),
   });
 }

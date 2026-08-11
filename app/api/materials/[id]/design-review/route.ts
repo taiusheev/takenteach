@@ -93,8 +93,8 @@ export async function POST(
       designCss: "",
       designNote: HOUSE_NOTE,
     });
-    snapshotAndUpdate(material.id, "design below house standard", role, material.title, next);
-    logActivity(
+    await snapshotAndUpdate(material.id, "design below house standard", role, material.title, next);
+    await logActivity(
       material.id,
       role,
       "design-house-fallback",
@@ -114,9 +114,9 @@ export async function POST(
     const changed = review.css.trim() && review.css.trim() !== content.designCss.trim();
     if (changed) {
       const next = lessonPackSchema.parse({ ...content, designCss: review.css });
-      snapshotAndUpdate(material.id, "design proof-read", role, material.title, next);
+      await snapshotAndUpdate(material.id, "design proof-read", role, material.title, next);
     }
-    logActivity(
+    await logActivity(
       material.id,
       role,
       "design-review",

@@ -15,13 +15,13 @@ import { type LessonPack } from "./lesson-pack-schema";
  */
 export type PriorDesign = { id: number; title: string; brief: string };
 
-export function priorDesigns(
+export async function priorDesigns(
   scope: Scope,
   excludeId: number,
   limit = 6
-): PriorDesign[] {
+): Promise<PriorDesign[]> {
   const out: PriorDesign[] = [];
-  for (const m of listMaterials(scope)) {
+  for (const m of await listMaterials(scope)) {
     if (m.id === excludeId || m.type !== "lesson-pack") continue;
     const pack = m.content as LessonPack;
     // designBrief OR designNote. `designBrief` was written only by the per-page
@@ -45,14 +45,14 @@ export function priorDesigns(
  * template showing through. Showing the planner the whole library's titles forces
  * genuinely new page names.
  */
-export function priorPageTitles(
+export async function priorPageTitles(
   scope: Scope,
   excludeId: number,
   limit = 60
-): string[] {
+): Promise<string[]> {
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const m of listMaterials(scope)) {
+  for (const m of await listMaterials(scope)) {
     if (m.id === excludeId || m.type !== "lesson-pack") continue;
     for (const a of (m.content as LessonPack).activities ?? []) {
       const t = a.title.trim();
@@ -71,14 +71,14 @@ export function priorPageTitles(
  * fires for siblings, so a new series happily re-taught "warrant" to a varsity
  * squad that learned it two years ago.
  */
-export function priorVocabTerms(
+export async function priorVocabTerms(
   scope: Scope,
   excludeId: number,
   limit = 60
-): string[] {
+): Promise<string[]> {
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const m of listMaterials(scope)) {
+  for (const m of await listMaterials(scope)) {
     if (m.id === excludeId || m.type !== "lesson-pack") continue;
     for (const v of (m.content as LessonPack).vocabulary ?? []) {
       const t = v.term.trim();

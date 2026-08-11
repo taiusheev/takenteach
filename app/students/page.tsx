@@ -16,8 +16,8 @@ export const dynamic = "force-dynamic";
  */
 export default async function StudentsPage() {
   const { legacyRole: role, scope } = await requireActiveSession();
-  const students = listStudents(scope);
-  const all = listAllObservations(scope);
+  const students = await listStudents(scope);
+  const all = await listAllObservations(scope);
 
   const byStudent = new Map<number, typeof all>();
   for (const o of all) {

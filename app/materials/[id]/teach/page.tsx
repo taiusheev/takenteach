@@ -16,7 +16,7 @@ export default async function TeachPage(ctx: {
 }) {
   const { scope } = await requireActiveSession();
   const { id } = await ctx.params;
-  const material = getMaterial(scope, Number(id));
+  const material = await getMaterial(scope, Number(id));
   if (!material) notFound();
   // Only lesson packs have per-page durations and expected answers to run from.
   if (material.type !== "lesson-pack") redirect(`/materials/${material.id}`);

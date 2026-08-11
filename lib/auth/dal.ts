@@ -79,14 +79,13 @@ export const getSession = cache(async (): Promise<Session | null> => {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
 
-  const record = readSessionRecord(token);
+  const record = await readSessionRecord(token);
   if (!record) return null;
 
   return {
     ...record,
-    mustChangePassword: Boolean(record.mustChangePassword),
     legacyRole: toLegacyRole(record.orgRole),
-    memberships: listMemberships(record.userId),
+    memberships: await listMemberships(record.userId),
     scope: {
       orgId: record.orgId,
       userId: record.userId,

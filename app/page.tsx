@@ -33,7 +33,7 @@ export default async function LibraryPage({
 }) {
   const { legacyRole: role, scope } = await requireActiveSession();
   const sp = await searchParams;
-  const all = listMaterials(scope);
+  const all = await listMaterials(scope);
   const summary = librarySummary(all);
 
   // Classes (units) — lesson-packs grouped by subject + series. Surfaced as a

@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
   const subject: Subject = SUBJECTS.includes(plan.subject as Subject)
     ? (plan.subject as Subject)
     : "debate";
-  const kit = listStyleKits(scope).find((k) => k.is_default === 1);
+  const kit = (await listStyleKits(scope)).find((k) => k.is_default === 1);
   if (!kit) {
     return serverError(
       "There is no default Style Kit — every material inherits one, so nothing can be created until a kit is marked default."
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
   // in case the author edited the accent to something too close.
   const accent = ensureDistinctAccent(
     plan.design.accentColor,
-    usedAccents(listMaterials(scope))
+    usedAccents(await listMaterials(scope))
   );
   const rigorLevel = (RIGOR_LEVELS as readonly string[]).includes(plan.rigorLevel)
     ? plan.rigorLevel
@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
       lesson.coverTitle || lesson.skillFocus || "Untitled lesson"
     }`;
     ids.push(
-      createMaterial(scope, title, kit.id, content, role, subject, undefined, "lesson-pack")
+      await createMaterial(scope, title, kit.id, content, role, subject, undefined, "lesson-pack")
     );
   }
 

@@ -12,28 +12,32 @@ export const dynamic = "force-dynamic";
 
 export default async function ReviewQueuePage() {
   const { legacyRole: role, scope } = await requireActiveSession();
-  const queue = listMaterials(scope).filter(
+  const queue = (await listMaterials(scope)).filter(
     (m) => m.status === "in_review" || m.status === "approved"
   );
   const canAct = role === "founder" || role === "coach";
 
   // Per-pack quality signals so a reviewer can triage without opening each one.
-  const rows = queue.map((m) => {
-    const c = commonFields(m.content);
-    const checklist = runChecklistFor(
-      m.type,
-      m.content,
-      m.subject,
-      getKitForMaterial(scope, m.style_kit_id)?.config
-    );
-    const failing = checklist.items.filter((i) => !i.passed).length;
-    const coh =
-      m.type === "lesson-pack" ? coherenceReport(m.content as LessonPack) : null;
-    const unused = coh
-      ? coh.unusedEvidence.length + coh.unusedVocab.length
-      : 0;
-    return { m, c, failing, unused, pages: pageEstimate(m.type, m.content) };
-  });
+  const rows = await Promise.all(
+    queue.map(async (m) => {
+      const c = commonFields(m.content);
+      const checklist = runChecklistFor(
+        m.type,
+        m.content,
+        m.subject,
+        (await getKitForMaterial(scope, m.style_kit_id))?.config
+      );
+      const failing = checklist.items.filter((i) => !i.passed).length;
+      const coh =
+        m.type === "lesson-pack"
+          ? coherenceReport(m.content as LessonPack)
+          : null;
+      const unused = coh
+        ? coh.unusedEvidence.length + coh.unusedVocab.length
+        : 0;
+      return { m, c, failing, unused, pages: pageEstimate(m.type, m.content) };
+    })
+  );
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">

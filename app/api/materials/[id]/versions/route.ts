@@ -33,7 +33,7 @@ export async function GET(
   if (!found.ok) return found.response;
   const scope = found.session.scope;
 
-  const versions = listVersions(scope, found.material.id).map((v) => ({
+  const versions = (await listVersions(scope, found.material.id)).map((v) => ({
     id: v.id,
     label: v.label,
     role: v.role,
@@ -60,12 +60,12 @@ export async function POST(
   const { versionId } = parsed.data;
 
   // a version from another material must never be pasted into this one
-  const owned = listVersions(scope, material.id).some((v) => v.id === versionId);
+  const owned = (await listVersions(scope, material.id)).some((v) => v.id === versionId);
   if (!owned) {
     return badRequest("That version doesn't belong to this material.");
   }
 
-  const restored = restoreVersion(scope, versionId, role);
+  const restored = await restoreVersion(scope, versionId, role);
   if (!restored) {
     return notFound("Version not found.");
   }

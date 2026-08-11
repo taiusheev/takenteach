@@ -86,7 +86,7 @@ export async function POST(
     `${opts.lessonCode ? opts.lessonCode + " · " : ""}${opts.coverTitle || opts.skillFocus || source.title}` ||
     `Copy of ${source.title}`;
 
-  const newId = createMaterial(scope, 
+  const newId = await createMaterial(scope, 
     title,
     source.style_kit_id,
     pack,
@@ -96,7 +96,7 @@ export async function POST(
     source.type
   );
 
-  logActivity(
+  await logActivity(
     source.id,
     role,
     mode === "duplicate" ? "duplicated" : "remixed",

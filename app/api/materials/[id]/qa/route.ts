@@ -34,8 +34,8 @@ export async function POST(
       contentQaJson: JSON.stringify({ ...report, contentHash: packContentHash(content) }),
       contentQaAt: new Date().toISOString(),
     });
-    updateMaterialContent(material.id, material.title, next);
-    logActivity(
+    await updateMaterialContent(material.id, material.title, next);
+    await logActivity(
       material.id,
       role,
       "content-qa",

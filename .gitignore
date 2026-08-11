@@ -24,6 +24,9 @@
 .DS_Store
 *.pem
 
+# the local Postgres (PGlite) database — the dev-time replacement for data/*.db
+/.pglite/
+
 # the library itself, and its snapshots — real content, not source
 /data/*.db
 /data/*.db-wal

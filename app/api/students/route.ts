@@ -25,7 +25,7 @@ const archiveSchema = z.object({
 export async function GET() {
   const auth = await requireApiSession();
   if (!auth.ok) return auth.response;
-  return NextResponse.json({ students: listStudents(auth.session.scope) });
+  return NextResponse.json({ students: await listStudents(auth.session.scope) });
 }
 
 export async function POST(req: NextRequest) {
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
 
   const parsed = await readBody(req, createSchema);
   if (!parsed.ok) return parsed.response;
-  const id = createStudent(scope, parsed.data);
+  const id = await createStudent(scope, parsed.data);
   return NextResponse.json({ id });
 }
 
@@ -52,6 +52,6 @@ export async function PATCH(req: NextRequest) {
   const parsed = await readBody(req, archiveSchema);
   if (!parsed.ok) return parsed.response;
   const { id, archived } = parsed.data;
-  setStudentArchived(scope, id, archived !== false);
+  await setStudentArchived(scope, id, archived !== false);
   return NextResponse.json({ ok: true });
 }

@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   if (!parsed.ok) return parsed.response;
   const { email, password, remember } = parsed.data;
 
-  const user = getUserByEmail(email);
+  const user = await getUserByEmail(email);
 
   /* A miss must cost the same as a hit. Returning early here makes "no such
      user" answer in about a millisecond and "wrong password" in about eighty —
@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
      creates a personal org in the same transaction as the user — but "should be
      impossible" is exactly the state that turns into a crash on the login path
      if a future migration ever gets it wrong. */
-  const memberships = listMemberships(user.id);
+  const memberships = await listMemberships(user.id);
   const landing =
     memberships.find((m) => m.status === "active") ??
     memberships.find((m) => m.status === "pending");
@@ -56,12 +56,12 @@ export async function POST(req: NextRequest) {
      has just handed us the plaintext — this is the only moment we can upgrade
      it, and it happens without them noticing. */
   if (needsRehash(user.password_hash)) {
-    setPassword(user.id, await hashPassword(password), {
+    await setPassword(user.id, await hashPassword(password), {
       mustChange: Boolean(user.must_change_password),
     });
   }
 
-  markLoggedIn(user.id);
+  await markLoggedIn(user.id);
 
   const res = NextResponse.json({
     ok: true,
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
        field is a courtesy to the client, not the control. */
     next: user.must_change_password ? "/account/password" : "/",
   });
-  startSession(res, {
+  await startSession(res, {
     userId: user.id,
     activeOrgId: landing.orgId,
     remember,

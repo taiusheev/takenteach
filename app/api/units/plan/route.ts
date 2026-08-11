@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   const parsed = await readBody(req, bodySchema);
   if (!parsed.ok) return parsed.response;
   const { idea, count } = parsed.data;
-  const all = listMaterials(scope);
+  const all = await listMaterials(scope);
   const usedSeries = [
     ...new Set(
       all.map((m) => commonFields(m.content).series).filter((s): s is string => !!s)

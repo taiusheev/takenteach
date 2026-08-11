@@ -30,18 +30,18 @@ export async function POST(req: NextRequest) {
   let name = body.name?.trim() || "Untitled kit";
 
   if (body.duplicateOf) {
-    const src = getStyleKit(scope, body.duplicateOf);
+    const src = await getStyleKit(scope, body.duplicateOf);
     if (!src) return notFound("Source kit not found");
     config = src.config;
     locked = src.locked_fields;
     if (!body.name?.trim()) name = `${src.name} (copy)`;
   }
 
-  const taken = listStyleKits(scope).some(
+  const taken = (await listStyleKits(scope)).some(
     (k) => k.name.toLowerCase() === name.toLowerCase()
   );
   if (taken) name = `${name} 2`;
 
-  const id = createStyleKit(scope, name, parseKitConfig(config), locked);
+  const id = await createStyleKit(scope, name, parseKitConfig(config), locked);
   return NextResponse.json({ id });
 }

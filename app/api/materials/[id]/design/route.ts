@@ -29,7 +29,7 @@ export async function POST(
   try {
     // Design memory: show the model what earlier packs look like so it invents
     // something genuinely its own and raises the bar.
-    const avoid = avoidDigest(priorDesigns(session.scope, material.id));
+    const avoid = avoidDigest(await priorDesigns(session.scope, material.id));
     const design = await generateDesignSystem(material.subject, content, avoid);
     const next = lessonPackSchema.parse({
       ...content,
@@ -38,7 +38,7 @@ export async function POST(
     });
     // snapshot the state this call is about to overwrite
     snapshotAndUpdate(material.id, "design system generated", role, material.title, next);
-    logActivity(material.id, role, "design-system", design.note);
+    await logActivity(material.id, role, "design-system", design.note);
     return NextResponse.json({ pack: next, note: design.note });
   } catch (err) {
     return serverError(describeAiError(err, "Design generation failed"));

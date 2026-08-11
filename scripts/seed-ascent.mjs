@@ -15,13 +15,15 @@
  * with `must_change_password = 1`, so it is a key that opens one door — the
  * change-password screen — and nothing else until the founder picks their own.
  *
- * WHAT THIS DOES NOT DO YET: attach the 13 existing materials, students, kits
- * and rounds to the organization. Those tables have no org_id column — that is
- * phase 2 of docs/SAAS-FOUNDATION.md, and the backfill belongs in the same
- * migration that adds the column, not in a script that would have to guess.
+ * WHAT THIS DOES NOT DO: move the existing library into the organization. That
+ * is scripts/db-import.mjs, which copies the SQLite database into Postgres with
+ * its ids intact — a different job with a different failure mode, and one that
+ * must not be entangled with issuing a password.
  */
 
 import { hashPassword, generatePassword } from "@/lib/auth/password";
+import { ensureSchema } from "@/lib/schema";
+import { closeDb } from "@/lib/pg";
 import {
   createMembership,
   createOrganization,
@@ -43,22 +45,30 @@ function line(s = "") {
   process.stdout.write(`${s}\n`);
 }
 
+/* The tables have to exist before anything below can run. Cheap and idempotent,
+   and it means a fresh Postgres needs one command rather than two in the right
+   order. */
+await ensureSchema();
+
+/* Deliberately not `getOrganizationBySlug(...) ?? createOrganization(...)`.
+   Both sides are promises now, and a promise is truthy — that one-liner would
+   have created a second organization on every run while looking correct. */
 const org =
-  getOrganizationBySlug(ORG_SLUG) ??
-  createOrganization({
+  (await getOrganizationBySlug(ORG_SLUG)) ??
+  (await createOrganization({
     name: ORG_NAME,
     kind: "school",
     location: "",
     sizeBand: "6-20",
-  });
+  }));
 line(`organization  ${org.name}  (id ${org.id}, slug ${org.slug})`);
 
-let user = getUserByEmail(FOUNDER_EMAIL);
+let user = await getUserByEmail(FOUNDER_EMAIL);
 let issued = "";
 
 if (!user) {
   issued = generatePassword();
-  user = createUser({
+  user = await createUser({
     email: FOUNDER_EMAIL,
     passwordHash: await hashPassword(issued),
     name: FOUNDER_NAME,
@@ -71,14 +81,14 @@ if (!user) {
   line(`user          ${user.email}  (id ${user.id}) — created`);
 } else if (resetPassword) {
   issued = generatePassword();
-  setPassword(user.id, await hashPassword(issued), { mustChange: true });
+  await setPassword(user.id, await hashPassword(issued), { mustChange: true });
   line(`user          ${user.email}  (id ${user.id}) — password reset`);
 } else {
   line(`user          ${user.email}  (id ${user.id}) — already exists, untouched`);
 }
 
-if (!getMembership(user.id, org.id)) {
-  createMembership({
+if (!(await getMembership(user.id, org.id))) {
+  await createMembership({
     userId: user.id,
     orgId: org.id,
     orgRole: "owner",
@@ -106,3 +116,6 @@ if (issued) {
   line("No password issued. Pass --reset-password to force a new one.");
 }
 line();
+
+// The pool holds the process open otherwise.
+await closeDb();

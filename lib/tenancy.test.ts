@@ -1,35 +1,39 @@
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
 /**
- * THE TEST PHASE 2 EXISTS FOR.
+ * THE TEST PHASE 2 EXISTS FOR — now re-run against Postgres.
  *
- * Everything else in the migration — the org_id columns, the Scope parameter,
- * the guard changes — is a means to one end: two organizations on one
- * installation must not be able to see or touch each other's work. That claim
- * is either true or it is a security incident, and "tsc passes" does not
+ * Everything in the tenancy migration — the org_id columns, the Scope
+ * parameter, the guard changes — is a means to one end: two organizations on
+ * one installation must not be able to see or touch each other's work. That
+ * claim is either true or it is a security incident, and "tsc passes" does not
  * establish it. This does.
  *
  * It runs against the REAL query layer, not a mock. A mocked lib/db would be
  * testing the assertion that the mock is right, which is the thing in doubt.
- * The database is a throwaway file in the OS temp directory, pointed at by
- * TAKENTEACH_DB before lib/db is imported — the module opens its connection on
- * first use, so the import has to come after the variable is set, which is why
- * it is a dynamic import inside `before` rather than a top-level one.
+ *
+ * ── WHAT THE PORT CHANGED HERE ───────────────────────────────────────────
+ * The database used to be a throwaway SQLite file in the OS temp directory,
+ * pointed at by TAKENTEACH_DB before lib/db was imported — which is why the
+ * imports were dynamic and inside `before`. There is no file any more: with no
+ * DATABASE_URL, lib/pg.ts runs PGlite in-process, so the whole dance collapses
+ * into `ensureSchema()` and ordinary top-level imports.
+ *
+ * The assertions themselves are unchanged apart from `await`, which is the
+ * point of running them: they are the same claims, re-proved on the new engine
+ * rather than assumed to have survived the translation.
  */
 
-const TMP = path.join(
-  fs.mkdtempSync(path.join(os.tmpdir(), "tt-tenancy-")),
-  "test.db"
-);
+/* A DATABASE_URL in the shell would otherwise point this suite at the real
+   Supabase database — and this file creates organizations and deletes
+   materials. Cleared before anything can open a connection. */
+delete process.env.DATABASE_URL;
 
-type Db = typeof import("./db");
-type Store = typeof import("./auth/store");
-let db: Db;
-let store: Store;
+const db = await import("./db");
+const store = await import("./auth/store");
+const { ensureSchema } = await import("./schema");
+const { all, closeDb } = await import("./pg");
 
 /** Two organizations, each with a teacher, a kit and a lesson. */
 interface Tenant {
@@ -42,13 +46,13 @@ interface Tenant {
 }
 
 async function makeTenant(name: string, i: number): Promise<Tenant> {
-  const user = store.createUser({
+  const user = await store.createUser({
     email: `t${i}@example.test`,
     passwordHash: "scrypt$1$1$1$c2FsdA==$aGFzaA==",
     name: `Teacher ${i}`,
   });
-  const org = store.createOrganization({ name, kind: "school" });
-  store.createMembership({
+  const org = await store.createOrganization({ name, kind: "school" });
+  await store.createMembership({
     userId: user.id,
     orgId: org.id,
     orgRole: "owner",
@@ -62,8 +66,8 @@ async function makeTenant(name: string, i: number): Promise<Tenant> {
      visibility filter alone would hide the rows. */
   const scope = { orgId: org.id, userId: user.id, canSeeAllPrivate: true };
 
-  const kitId = db.listStyleKits(scope)[0].id;
-  const materialId = db.createMaterial(
+  const kitId = (await db.listStyleKits(scope))[0].id;
+  const materialId = await db.createMaterial(
     scope,
     `${name} lesson`,
     kitId,
@@ -71,7 +75,7 @@ async function makeTenant(name: string, i: number): Promise<Tenant> {
     "founder",
     "debate"
   );
-  const studentId = db.createStudent(scope, {
+  const studentId = await db.createStudent(scope, {
     name: `Student ${i}`,
     cohort: "",
     subject: "debate",
@@ -87,24 +91,31 @@ let b: Tenant;
 
 describe("tenant isolation", () => {
   before(async () => {
-    process.env.TAKENTEACH_DB = TMP;
-    db = await import("./db");
-    store = await import("./auth/store");
+    await ensureSchema();
     a = await makeTenant("Alpha Academy", 1);
     b = await makeTenant("Beta School", 2);
   });
 
-  after(() => {
-    try {
-      fs.rmSync(path.dirname(TMP), { recursive: true, force: true });
-    } catch {
-      /* a leftover temp directory is not worth failing a suite over */
-    }
+  after(async () => {
+    await closeDb();
   });
 
-  test("each organization sees only its own materials", () => {
-    const seenByA = db.listMaterials(a.scope).map((m) => m.id);
-    const seenByB = db.listMaterials(b.scope).map((m) => m.id);
+  test("ids come back as numbers, not strings", async () => {
+    /* The one failure the port could have introduced that every other test
+       here would have missed. `pg` decodes bigint as a STRING by default and
+       PGlite decodes it as a number, so without the type parser in lib/pg.ts
+       this suite would pass on PGlite while production served `"13"` as every
+       material id — and `id === 13` would silently be false. */
+    assert.equal(typeof a.materialId, "number");
+    const material = await db.getMaterial(a.scope, a.materialId);
+    assert.equal(typeof material!.id, "number");
+    assert.equal(typeof material!.org_id, "number");
+    assert.equal(typeof (await db.countForksOf(a.scope, a.materialId)), "number");
+  });
+
+  test("each organization sees only its own materials", async () => {
+    const seenByA = (await db.listMaterials(a.scope)).map((m) => m.id);
+    const seenByB = (await db.listMaterials(b.scope)).map((m) => m.id);
 
     assert.deepEqual(seenByA, [a.materialId]);
     assert.deepEqual(seenByB, [b.materialId]);
@@ -115,81 +126,113 @@ describe("tenant isolation", () => {
     );
   });
 
-  test("addressing another organization's material by id returns nothing", () => {
+  test("addressing another organization's material by id returns nothing", async () => {
     // The 404-not-403 rule: to A, B's material does not exist.
-    assert.equal(db.getMaterial(a.scope, b.materialId), null);
-    assert.equal(db.getMaterial(b.scope, a.materialId), null);
+    assert.equal(await db.getMaterial(a.scope, b.materialId), null);
+    assert.equal(await db.getMaterial(b.scope, a.materialId), null);
     // ...while each can still read its own.
-    assert.ok(db.getMaterial(a.scope, a.materialId));
+    assert.ok(await db.getMaterial(a.scope, a.materialId));
   });
 
-  test("style kits, students and rounds are scoped too", () => {
+  test("style kits, students and rounds are scoped too", async () => {
     assert.deepEqual(
-      db.listStyleKits(a.scope).map((k) => k.id),
+      (await db.listStyleKits(a.scope)).map((k) => k.id),
       [a.kitId]
     );
-    assert.equal(db.getStyleKit(a.scope, b.kitId), null);
+    assert.equal(await db.getStyleKit(a.scope, b.kitId), null);
     assert.deepEqual(
-      db.listStudents(a.scope).map((s) => s.id),
+      (await db.listStudents(a.scope)).map((s) => s.id),
       [a.studentId]
     );
-    assert.equal(db.getStudent(a.scope, b.studentId), null);
-    assert.deepEqual(db.listRounds(a.scope), []);
+    assert.equal(await db.getStudent(a.scope, b.studentId), null);
+    assert.deepEqual(await db.listRounds(a.scope), []);
   });
 
-  test("promoting a default kit does not touch another organization", () => {
+  test("promoting a default kit does not touch another organization", async () => {
     /* The regression this names really existed: setDefaultStyleKit ran
        `UPDATE style_kits SET is_default = 0` with no WHERE at all, so one
        school promoting a kit cleared the flag for every school on the
        platform and the next teacher anywhere found no kit selected. */
-    const extra = db.createStyleKit(a.scope, "Second kit", {} as never, []);
-    db.setDefaultStyleKit(a.scope, extra);
+    const extra = await db.createStyleKit(a.scope, "Second kit", {} as never, []);
+    await db.setDefaultStyleKit(a.scope, extra);
 
-    const bDefaults = db.listStyleKits(b.scope).filter((k) => k.is_default === 1);
+    const bDefaults = (await db.listStyleKits(b.scope)).filter(
+      (k) => k.is_default === 1
+    );
     assert.equal(bDefaults.length, 1, "Beta lost its default kit");
     assert.equal(bDefaults[0].id, b.kitId);
   });
 
-  test("deleting across organizations destroys nothing", () => {
-    db.deleteMaterial(a.scope, b.materialId);
+  test("cross-organization writes change nothing", async () => {
+    /* Reads being scoped is only half of it. Every UPDATE that carries an id
+       must also carry the organization, or a caller who knows a number can
+       edit a row they cannot see — which is a worse bug than reading it,
+       because it leaves no trace on their own screen. */
+    await db.updateStyleKit(a.scope, b.kitId, "Renamed by Alpha", {} as never, []);
+    const bKit = await db.getStyleKit(b.scope, b.kitId);
+    assert.notEqual(bKit!.name, "Renamed by Alpha", "Alpha renamed Beta's kit");
+
+    await db.setStudentArchived(a.scope, b.studentId, true);
+    const bStudent = await db.getStudent(b.scope, b.studentId);
+    assert.equal(bStudent!.archived, 0, "Alpha archived Beta's student");
+
+    await db.setMaterialVisibility(a.scope, b.materialId, "private");
+    const bMaterial = await db.getMaterial(b.scope, b.materialId);
+    assert.equal(
+      bMaterial!.visibility,
+      "organization",
+      "Alpha changed who can see Beta's lesson"
+    );
+  });
+
+  test("deleting across organizations destroys nothing", async () => {
+    await db.deleteMaterial(a.scope, b.materialId);
     assert.ok(
-      db.getMaterial(b.scope, b.materialId),
+      await db.getMaterial(b.scope, b.materialId),
       "Alpha deleted Beta's lesson"
     );
   });
 
-  test("a version cannot be restored into another organization's material", () => {
+  test("a version cannot be restored into another organization's material", async () => {
     // A version is addressed by its OWN id, so it is reachable without naming
     // its material — the one row shape where the join is the whole defence.
-    const versionId = db.snapshotMaterial(b.materialId, "test", "founder");
+    const versionId = await db.snapshotMaterial(b.materialId, "test", "founder");
     assert.ok(versionId);
-    assert.equal(db.getVersion(a.scope, versionId!), null);
-    assert.equal(db.restoreVersion(a.scope, versionId!, "founder"), null);
-    assert.ok(db.getVersion(b.scope, versionId!));
+    assert.equal(await db.getVersion(a.scope, versionId!), null);
+    assert.equal(await db.restoreVersion(a.scope, versionId!, "founder"), null);
+    assert.ok(await db.getVersion(b.scope, versionId!));
   });
 
-  test("a private material is hidden from colleagues but not from its author", () => {
+  test("a private material is hidden from colleagues but not from its author", async () => {
     const authorScope = { ...a.scope, canSeeAllPrivate: false };
     const colleague = {
       orgId: a.orgId,
       userId: a.userId + 999, // same org, a different person
       canSeeAllPrivate: false,
     };
-    db.setMaterialVisibility(a.scope, a.materialId, "private");
+    await db.setMaterialVisibility(a.scope, a.materialId, "private");
 
-    assert.equal(db.getMaterial(colleague, a.materialId), null);
-    assert.ok(db.getMaterial(authorScope, a.materialId));
+    assert.equal(await db.getMaterial(colleague, a.materialId), null);
+    assert.ok(await db.getMaterial(authorScope, a.materialId));
     // A coach or admin in the same org reviews what they cannot otherwise see.
-    assert.ok(db.getMaterial({ ...colleague, canSeeAllPrivate: true }, a.materialId));
+    assert.ok(
+      await db.getMaterial({ ...colleague, canSeeAllPrivate: true }, a.materialId)
+    );
   });
 
-  test("every content table refuses to hold an unowned row", () => {
-    const raw = db.getDb();
+  test("every content table refuses to hold an unowned row", async () => {
+    /* This used to be the substitute for a constraint SQLite could not express:
+       ALTER TABLE could add NOT NULL or a REFERENCES clause but not both, so
+       the migrated database had a nullable org_id and a startup assertion stood
+       in for it. Postgres has the real constraint now (proved in
+       lib/schema.test.ts), so what is worth checking HERE is the other half —
+       that after a suite's worth of ordinary writes, nothing has landed
+       unowned. */
     for (const table of ["materials", "style_kits", "students", "rounds"]) {
-      const { n } = raw
-        .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE org_id IS NULL`)
-        .get() as { n: number };
-      assert.equal(n, 0, `${table} has rows with no organization`);
+      const rows = await all<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM ${table} WHERE org_id IS NULL`
+      );
+      assert.equal(rows[0].n, 0, `${table} has rows with no organization`);
     }
   });
 });

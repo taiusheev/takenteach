@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
+import { transaction } from "@/lib/pg";
 import { badRequest, conflict, readBody } from "@/lib/api/request";
 import { signupSchema, type Signup } from "@/lib/auth/schema";
 import { hashPassword } from "@/lib/auth/password";
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
   /* Checked before the write as a courtesy — the UNIQUE index is what actually
      guarantees it, since two simultaneous signups both pass this check. The
      insert below is wrapped for exactly that race. */
-  if (getUserByEmail(input.email)) {
+  if (await getUserByEmail(input.email)) {
     return conflict(
       "An account with that email already exists. Sign in instead, or reset your password."
     );
@@ -57,10 +57,16 @@ export async function POST(req: NextRequest) {
 
   let created: Built;
   try {
-    created = getDb().transaction(() => build(input, passwordHash))();
+    created = await transaction(() => build(input, passwordHash));
   } catch (err) {
-    // The UNIQUE(email) index firing means someone else won the race.
-    if (String(err).includes("UNIQUE") && String(err).includes("email")) {
+    /* The UNIQUE(email) index firing means someone else won the race.
+       Matched on the SQLSTATE rather than the message text: this used to read
+       `String(err).includes("UNIQUE")`, which was SQLite's wording. Postgres
+       says "duplicate key value violates unique constraint", so the old check
+       would have quietly stopped matching and turned a lost signup race into a
+       500 instead of "that email is taken". 23505 is unique_violation and is
+       the same code on every Postgres. */
+    if (isUniqueViolation(err)) {
       return conflict("An account with that email already exists.");
     }
     throw err;
@@ -73,13 +79,22 @@ export async function POST(req: NextRequest) {
        join request on the next page load. */
     joinRequest: created.joinRequest,
   });
-  startSession(res, {
+  await startSession(res, {
     userId: created.userId,
     activeOrgId: created.orgId,
     remember: true, // someone who just signed up did not come here to log in again
     userAgent: req.headers.get("user-agent") ?? "",
   });
   return res;
+}
+
+/** Postgres SQLSTATE 23505 — unique_violation. Both drivers expose `.code`. */
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { code?: unknown }).code === "23505"
+  );
 }
 
 interface Built {
@@ -97,20 +112,20 @@ interface Built {
  * with no owner, are both states nothing downstream is written to handle — so
  * neither may exist even briefly.
  */
-function build(input: Signup, passwordHash: string): Built {
+async function build(input: Signup, passwordHash: string): Promise<Built> {
   if (input.accountType === "school") {
-    const user = createUser({
+    const user = await createUser({
       email: input.email,
       passwordHash,
       name: input.adminName,
     });
-    const org = createOrganization({
+    const org = await createOrganization({
       name: input.schoolName,
       kind: "school",
       location: input.location,
       sizeBand: input.teacherCount,
     });
-    createMembership({
+    await createMembership({
       userId: user.id,
       orgId: org.id,
       orgRole: "owner",
@@ -120,7 +135,7 @@ function build(input: Signup, passwordHash: string): Built {
   }
 
   // ── Teacher ──
-  const user = createUser({
+  const user = await createUser({
     email: input.email,
     passwordHash,
     name: input.name,
@@ -129,11 +144,11 @@ function build(input: Signup, passwordHash: string): Built {
   /* The personal workspace, always, whatever else happens. It is what they own
      outright and where their lessons live until they deliberately move them —
      joining a school must never silently hand a teacher's existing work to it. */
-  const personal = createOrganization({
+  const personal = await createOrganization({
     name: personalOrgName(input.name, input.email),
     kind: "individual",
   });
-  createMembership({
+  await createMembership({
     userId: user.id,
     orgId: personal.id,
     orgRole: "owner",
@@ -152,11 +167,11 @@ function build(input: Signup, passwordHash: string): Built {
   let joinRequest: Built["joinRequest"] = null;
   const wanted = input.schoolName.trim();
   if (wanted) {
-    const school = findSchoolsByName(wanted, 2);
+    const school = await findSchoolsByName(wanted, 2);
     // Exactly one candidate, or nothing. Two schools whose names both contain
     // what they typed is a question for a person, not a guess for this function.
     if (school.length === 1) {
-      createMembership({
+      await createMembership({
         userId: user.id,
         orgId: school[0].id,
         orgRole: "teacher",

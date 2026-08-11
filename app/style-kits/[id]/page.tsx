@@ -11,7 +11,7 @@ export default async function StyleKitPage(ctx: {
 }) {
   const { legacyRole: role, scope } = await requireActiveSession();
   const { id } = await ctx.params;
-  const kit = getStyleKit(scope, Number(id));
+  const kit = await getStyleKit(scope, Number(id));
   if (!kit) notFound();
 
   return (
@@ -28,7 +28,7 @@ export default async function StyleKitPage(ctx: {
         initialConfig={kit.config}
         initialLocked={kit.locked_fields}
         isDefault={kit.is_default === 1}
-        usage={countMaterialsUsingKit(scope, kit.id)}
+        usage={await countMaterialsUsingKit(scope, kit.id)}
         canEdit={role === "founder"}
       />
     </div>

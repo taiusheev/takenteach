@@ -13,9 +13,9 @@ export default async function PrintPage(ctx: {
 }) {
   const { legacyRole: role, scope } = await requireActiveSession();
   const { id } = await ctx.params;
-  const material = getMaterial(scope, Number(id));
+  const material = await getMaterial(scope, Number(id));
   if (!material) notFound();
-  const kit = getKitForMaterial(scope, material.style_kit_id);
+  const kit = await getKitForMaterial(scope, material.style_kit_id);
   if (!kit) notFound();
 
   if (material.type !== "lesson-pack") {
@@ -24,7 +24,7 @@ export default async function PrintPage(ctx: {
     // No model call — the stylesheet already exists.
     const series = (material.content as { series?: string }).series ?? "";
     const siblings = series
-      ? listSeriesSiblings(scope, material.subject, series, material.id)
+      ? (await listSeriesSiblings(scope, material.subject, series, material.id))
           .filter((m) => m.type === "lesson-pack")
           .map((m) => {
             const c = m.content as LessonPack;

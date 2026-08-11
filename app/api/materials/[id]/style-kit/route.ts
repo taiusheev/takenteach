@@ -28,10 +28,10 @@ export async function PUT(
   const parsed = await readBody(req, bodySchema);
   if (!parsed.ok) return parsed.response;
 
-  const kit = getStyleKit(scope, parsed.data.styleKitId);
+  const kit = await getStyleKit(scope, parsed.data.styleKitId);
   if (!kit) return notFound("Style kit not found");
 
-  setMaterialStyleKit(material.id, kit.id);
-  logActivity(material.id, role, "style-kit", `→ ${kit.name}`);
+  await setMaterialStyleKit(material.id, kit.id);
+  await logActivity(material.id, role, "style-kit", `→ ${kit.name}`);
   return NextResponse.json({ ok: true });
 }

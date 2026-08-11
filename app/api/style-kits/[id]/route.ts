@@ -40,7 +40,7 @@ export async function PUT(
   const config = parseKitConfig(body.config);
   const locked = body.lockedFields.filter((g) => VALID_GROUPS.includes(g));
 
-  updateStyleKit(scope, kit.id, body.name || kit.name, config, locked);
+  await updateStyleKit(scope, kit.id, body.name || kit.name, config, locked);
   return NextResponse.json({ ok: true });
 }
 
@@ -58,12 +58,12 @@ export async function DELETE(
       "Can't delete the default kit — make another kit the default first."
     );
   }
-  const inUse = countMaterialsUsingKit(scope, kit.id);
+  const inUse = await countMaterialsUsingKit(scope, kit.id);
   if (inUse > 0) {
     return conflict(
       `${inUse} material(s) are built in this kit — reassign them before deleting it.`
     );
   }
-  deleteStyleKit(scope, kit.id);
+  await deleteStyleKit(scope, kit.id);
   return NextResponse.json({ ok: true });
 }

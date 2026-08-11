@@ -12,12 +12,12 @@ export default async function RoundPage(ctx: {
 }) {
   const { scope } = await requireActiveSession();
   const { id } = await ctx.params;
-  const round = getRound(scope, Number(id));
+  const round = await getRound(scope, Number(id));
   if (!round) notFound();
 
-  const ballotMaterial = getMaterial(scope, round.ballot_id);
+  const ballotMaterial = await getMaterial(scope, round.ballot_id);
   const ballot = (ballotMaterial?.content as JudgeBallot) ?? null;
-  const submissions = listSubmissions(scope, round.id);
+  const submissions = await listSubmissions(scope, round.id);
   const result = summariseRound(submissions, ballot);
 
   const pro = round.pro_team || "Pro";

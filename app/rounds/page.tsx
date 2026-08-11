@@ -7,12 +7,14 @@ export const dynamic = "force-dynamic";
 
 export default async function RoundsPage() {
   const { legacyRole: role, scope } = await requireActiveSession();
-  const rounds = listRounds(scope).map((r) => ({
-    ...r,
-    submissions: countSubmissions(scope, r.id),
-  }));
+  const rounds = await Promise.all(
+    (await listRounds(scope)).map(async (r) => ({
+      ...r,
+      submissions: await countSubmissions(scope, r.id),
+    }))
+  );
   // only ballots that have cleared review are safe to judge from
-  const ballots = listMaterials(scope).filter(
+  const ballots = (await listMaterials(scope)).filter(
     (m) =>
       m.type === "judge-ballot" &&
       (m.status === "published" || m.status === "approved")
@@ -32,7 +34,7 @@ export default async function RoundsPage() {
 
       {canOpen && <NewRoundForm
           ballots={ballots.map((b) => ({ id: b.id, title: b.title }))}
-          students={listStudents(scope).map((s) => ({ id: s.id, name: s.name }))}
+          students={(await listStudents(scope)).map((s) => ({ id: s.id, name: s.name }))}
         />}
 
       {!canOpen && (

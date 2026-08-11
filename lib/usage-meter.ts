@@ -40,17 +40,25 @@ export function emptyUsage(): UsageTotals {
   return { calls: 0, input: 0, cacheWrite: 0, cacheRead: 0, output: 0 };
 }
 
-/** Run `fn` with a fresh meter; the totals are handed to `onFinish`. */
+/**
+ * Run `fn` with a fresh meter; the totals are handed to `onFinish`.
+ *
+ * `onFinish` may be async and is AWAITED. It writes the usage row to the
+ * database now that lib/db.ts is asynchronous, and the build route closes the
+ * response stream as soon as this resolves — an unawaited write there would be
+ * racing a closing stream for the cost record of a build that just spent real
+ * money.
+ */
 export function withUsageMeter<T>(
   fn: () => Promise<T>,
-  onFinish: (totals: UsageTotals) => void
+  onFinish: (totals: UsageTotals) => void | Promise<void>
 ): Promise<T> {
   const totals = emptyUsage();
   return store.run(totals, async () => {
     try {
       return await fn();
     } finally {
-      onFinish(totals);
+      await onFinish(totals);
     }
   });
 }

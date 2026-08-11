@@ -66,7 +66,7 @@ export async function POST(
   const section: RegenSection =
     body.section === "activity" ? { activityIndex: body.activityIndex } : body.section;
   const exemplar =
-    getBestExemplar(scope, 
+    (await getBestExemplar(scope, 
       material.subject,
       {
         skillFocus: content.skillFocus,
@@ -75,7 +75,7 @@ export async function POST(
         rigorLevel: content.rigorLevel,
       },
       material.id
-    )?.content ?? null;
+    ))?.content ?? null;
   try {
     const pack = await regenerateSection(
       material.subject,
@@ -83,14 +83,14 @@ export async function POST(
       section,
       body.instruction,
       signalForPrompt(
-        computeTeachingSignal(listRounds(scope), listAllSubmissions(scope), listMaterials(scope)),
+        computeTeachingSignal(await listRounds(scope), await listAllSubmissions(scope), await listMaterials(scope)),
         (material.content as LessonPack).skillFocus ?? ""
       ),
       exemplar
     );
     // snapshot the state this call is about to overwrite
     snapshotAndUpdate(material.id, "section regenerated", role, material.title, pack);
-    logActivity(
+    await logActivity(
       material.id,
       role,
       "regenerate-section",
@@ -99,7 +99,7 @@ export async function POST(
     // A steered rewrite is a correction — capture it (auto-tagged) so recurring
     // fixes become a measurable pattern the builder can learn from over time.
     if (body.instruction) {
-      logEditCorrection(scope, {
+      await logEditCorrection(scope, {
         materialId: material.id,
         role,
         subject: material.subject,
@@ -115,7 +115,7 @@ export async function POST(
         material.type,
         pack,
         material.subject,
-        getKitForMaterial(scope, material.style_kit_id)?.config
+        (await getKitForMaterial(scope, material.style_kit_id))?.config
       ),
     });
   } catch (err) {

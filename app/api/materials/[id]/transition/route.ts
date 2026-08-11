@@ -52,16 +52,16 @@ export async function POST(
     const content = material.content as LessonPack;
     const siblingVocab = earlierSiblingVocab(
       { id: material.id, lessonCode: content.lessonCode },
-      listSeriesSiblings(scope, material.subject, content.series ?? "", material.id)
+      await listSeriesSiblings(scope, material.subject, content.series ?? "", material.id)
     );
     const result = runChecklistFor(
       material.type,
       material.content,
       material.subject,
-      getKitForMaterial(scope, material.style_kit_id)?.config,
+      (await getKitForMaterial(scope, material.style_kit_id))?.config,
       { siblingVocab }
     );
-    saveChecklistRun(material.id, result.passed, result.items);
+    await saveChecklistRun(material.id, result.passed, result.items);
     if (!result.passed) {
       return unprocessable(
         "The evidence-integrity checklist must pass before review.",

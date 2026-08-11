@@ -8,10 +8,12 @@ export const dynamic = "force-dynamic";
 
 export default async function StyleKitsPage() {
   const { legacyRole: role, scope } = await requireActiveSession();
-  const kits = listStyleKits(scope).map((k) => ({
-    ...k,
-    usage: countMaterialsUsingKit(scope, k.id),
-  }));
+  const kits = await Promise.all(
+    (await listStyleKits(scope)).map(async (k) => ({
+      ...k,
+      usage: await countMaterialsUsingKit(scope, k.id),
+    }))
+  );
   const isFounder = role === "founder";
 
   return (

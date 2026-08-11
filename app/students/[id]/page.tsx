@@ -23,10 +23,10 @@ export default async function StudentPage({
 }) {
   const { scope } = await requireActiveSession();
   const { id } = await params;
-  const student = getStudent(scope, Number(id));
+  const student = await getStudent(scope, Number(id));
   if (!student) notFound();
 
-  const observations = listObservations(scope, student.id).map((o) => ({ ...o }));
+  const observations = (await listObservations(scope, student.id)).map((o) => ({ ...o }));
   const states = skillStates(observations);
   const next = recommendations(states);
   const seen = states.filter((s) => s.count > 0);

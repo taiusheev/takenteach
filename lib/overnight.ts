@@ -55,10 +55,10 @@ import type { InheritedOutline } from "./remix";
  * for the same request. (This function claimed to be shared long before it was —
  * the route kept its own copy of these forty lines until they were deleted.)
  */
-export function buildInputs(scope: Scope, material: MaterialRow) {
+export async function buildInputs(scope: Scope, material: MaterialRow) {
   const content = material.content as LessonPack;
-  const kit = getKitForMaterial(scope, material.style_kit_id);
-  const siblings = listSeriesSiblings(
+  const kit = await getKitForMaterial(scope, material.style_kit_id);
+  const siblings = await listSeriesSiblings(
     scope,
     material.subject,
     content.series ?? "",
@@ -81,13 +81,17 @@ export function buildInputs(scope: Scope, material: MaterialRow) {
     squadSignalForPrompt(
       squadSignal(
         content.series || "No cohort",
-        listStudents(scope),
-        listAllObservations(scope)
+        await listStudents(scope),
+        await listAllObservations(scope)
       ),
       skillFocus
     ),
     signalForPrompt(
-      computeTeachingSignal(listRounds(scope), listAllSubmissions(scope), listMaterials(scope)),
+      computeTeachingSignal(
+        await listRounds(scope),
+        await listAllSubmissions(scope),
+        await listMaterials(scope)
+      ),
       skillFocus
     ),
   ]
@@ -109,20 +113,25 @@ export function buildInputs(scope: Scope, material: MaterialRow) {
     inherited,
     evidence,
     exemplar:
-      getBestExemplar(
-        scope,
-        material.subject,
-        {
-          skillFocus: content.skillFocus,
-          format: content.format,
-          gradeBand: content.gradeBand,
-          rigorLevel: content.rigorLevel,
-        },
-        material.id
+      (
+        await getBestExemplar(
+          scope,
+          material.subject,
+          {
+            skillFocus: content.skillFocus,
+            format: content.format,
+            gradeBand: content.gradeBand,
+            rigorLevel: content.rigorLevel,
+          },
+          material.id
+        )
       )?.content ?? null,
-    corrections: recurringCorrectionGuidance(listCorrections(scope), material.subject),
+    corrections: recurringCorrectionGuidance(
+      await listCorrections(scope),
+      material.subject
+    ),
     design: {
-      avoid: avoidDigest(priorDesigns(scope, material.id)),
+      avoid: avoidDigest(await priorDesigns(scope, material.id)),
       inherit: look ? { css: look.designCss, note: look.designNote } : null,
     },
   };
@@ -189,7 +198,7 @@ export async function runOvernight(
   try {
     await Promise.all(
       materialIds.map(async (id) => {
-        const material = getMaterial(scope, id);
+        const material = await getMaterial(scope, id);
         if (!material || material.type !== "lesson-pack") {
           run.results.push({
             materialId: id,
@@ -199,9 +208,9 @@ export async function runOvernight(
           return;
         }
         try {
-          snapshotMaterial(material.id, "overnight build", role);
-          logActivity(material.id, role, "overnight-build-start");
-          const inputs = buildInputs(scope, material);
+          await snapshotMaterial(material.id, "overnight build", role);
+          await logActivity(material.id, role, "overnight-build-start");
+          const inputs = await buildInputs(scope, material);
           let pages = 0;
           const gen = generateLessonPack(
             material.subject,
@@ -231,10 +240,10 @@ export async function runOvernight(
             // that dies at 3am must leave everything it finished on disk.
             if ((event.type === "stage-done" || event.type === "done") && event.pack) {
               pages = event.pack.activities.length;
-              updateMaterialContent(material.id, material.title, event.pack);
+              await updateMaterialContent(material.id, material.title, event.pack);
             }
           }
-          logActivity(material.id, role, "overnight-build-done");
+          await logActivity(material.id, role, "overnight-build-done");
           run.results.push({ materialId: id, ok: true, pages });
         } catch (err) {
           // The founder reads this hours later, from the status endpoint, with
@@ -246,7 +255,12 @@ export async function runOvernight(
             ok: false,
             error: describeAiError(err, "Overnight build failed."),
           });
-          logActivity(material.id, role, "overnight-build-error", describeAiError(err));
+          await logActivity(
+            material.id,
+            role,
+            "overnight-build-error",
+            describeAiError(err)
+          );
         }
       })
     );

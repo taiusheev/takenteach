@@ -28,8 +28,8 @@ const STATUS_BAR: Record<Status, string> = {
 
 export default async function AnalyticsPage() {
   const { legacyRole: role, scope } = await requireActiveSession();
-  const materials = listMaterials(scope);
-  const corrections = listCorrections(scope);
+  const materials = await listMaterials(scope);
+  const corrections = await listCorrections(scope);
   const ins = computeInsights(materials, corrections);
 
   // What the AI builder now actively avoids: recurring correction patterns per
@@ -40,8 +40,8 @@ export default async function AnalyticsPage() {
   })).filter((x) => x.items.length > 0);
 
   // judging roll-up
-  const rounds = listRounds(scope);
-  const allSubs = listAllSubmissions(scope);
+  const rounds = await listRounds(scope);
+  const allSubs = await listAllSubmissions(scope);
   const secs = allSubs
     .map((s) => s.seconds_taken)
     .filter((n) => n > 0)

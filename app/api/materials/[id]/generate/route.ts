@@ -75,7 +75,7 @@ export async function POST(
           fresh ? "full rebuild" : "AI build",
           role
         );
-        logActivity(material.id, role, "quick-build-start");
+        await logActivity(material.id, role, "quick-build-start");
         // Everything the build grounds itself on — the kit, series siblings, a
         // remix's inherited outline, classroom evidence, the exemplar, recurring
         // corrections and the design memory. Gathered by the SAME function the
@@ -83,7 +83,7 @@ export async function POST(
         // so "build this pack now" and "build it at 3am for half price" were two
         // hand-maintained descriptions of one thing, and any fix to grounding
         // had to be made twice or silently applied to only one path.
-        const inputs = buildInputs(scope, material);
+        const inputs = await buildInputs(scope, material);
         const kit = inputs.kit;
         const stream =
           material.type === "lesson-pack"
@@ -133,14 +133,14 @@ export async function POST(
               if (req.signal.aborted) break;
               if (event.type === "stage-done" || event.type === "done") {
                 if (event.pack) {
-                  updateMaterialContent(material.id, material.title, event.pack);
+                  await updateMaterialContent(material.id, material.title, event.pack);
                 }
                 // A stage the build was allowed to survive without (design, QA)
                 // goes in the activity log. Without this the only evidence is a
                 // missing field, which is indistinguishable from "never asked
                 // for" — and the founder paid for the attempt either way.
                 if (event.skipped) {
-                  logActivity(
+                  await logActivity(
                     material.id,
                     role,
                     `stage-skipped:${event.stage}`,
@@ -160,9 +160,9 @@ export async function POST(
               });
             }
           },
-          (totals) => {
+          async (totals) => {
             send({ type: "usage", usage: totals, summary: describeUsage(totals) });
-            logActivity(
+            await logActivity(
               material.id,
               role,
               "quick-build-usage",
@@ -170,13 +170,13 @@ export async function POST(
             );
           }
         );
-        logActivity(material.id, role, "quick-build-done");
+        await logActivity(material.id, role, "quick-build-done");
       } catch (err) {
         send({
           type: "error",
           error: describeAiError(err, "Generation failed"),
         });
-        logActivity(
+        await logActivity(
           material.id,
           role,
           "quick-build-error",

@@ -27,17 +27,17 @@ export async function POST(
   const { material, role } = gate;
 
   const content = material.content as LessonPack;
-  const siblings = listSeriesSiblings(scope, 
+  const siblings = await listSeriesSiblings(scope, 
     material.subject,
     content.series ?? "",
     material.id
   );
   const evidence = signalForPrompt(
-    computeTeachingSignal(listRounds(scope), listAllSubmissions(scope), listMaterials(scope)),
+    computeTeachingSignal(await listRounds(scope), await listAllSubmissions(scope), await listMaterials(scope)),
     content.skillFocus ?? ""
   );
   const exemplar =
-    getBestExemplar(scope, 
+    (await getBestExemplar(scope, 
       material.subject,
       {
         skillFocus: content.skillFocus,
@@ -46,7 +46,7 @@ export async function POST(
         rigorLevel: content.rigorLevel,
       },
       material.id
-    )?.content ?? null;
+    ))?.content ?? null;
 
   try {
     const outline = await planOutline(material.subject, content, {
@@ -70,7 +70,7 @@ export async function POST(
     });
     // snapshot the state this call is about to overwrite
     snapshotAndUpdate(material.id, "outline replanned", role, material.title, next);
-    logActivity(material.id, role, "plan-outline", `${outline.activities.length} pages`);
+    await logActivity(material.id, role, "plan-outline", `${outline.activities.length} pages`);
     return NextResponse.json({ pack: next, outline });
   } catch (err) {
     return serverError(describeAiError(err, "Outline planning failed"));

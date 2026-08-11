@@ -25,10 +25,10 @@ export async function POST(req: NextRequest) {
   const parsed = await readBody(req, forgotSchema);
   if (!parsed.ok) return parsed.response;
 
-  const user = getUserByEmail(parsed.data.email);
+  const user = await getUserByEmail(parsed.data.email);
   if (user) {
     const token = newToken();
-    createPasswordReset(user.id, token, RESET_TTL);
+    await createPasswordReset(user.id, token, RESET_TTL);
 
     /* Built from the request's own origin rather than a configured base URL,
        which is one fewer thing to get wrong in three environments. `req.nextUrl`

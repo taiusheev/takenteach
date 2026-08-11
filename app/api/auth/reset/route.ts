@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
+import { transaction } from "@/lib/pg";
 import { badRequest, readBody } from "@/lib/api/request";
 import { resetSchema } from "@/lib/auth/schema";
 import { hashPassword } from "@/lib/auth/password";
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
   if (!parsed.ok) return parsed.response;
   const { token, password } = parsed.data;
 
-  const reset = readPasswordReset(token);
+  const reset = await readPasswordReset(token);
   if (!reset) {
     // Expired, already spent, and never-existed are one answer on purpose: the
     // difference between them is only useful to someone guessing tokens.
@@ -51,12 +51,12 @@ export async function POST(req: NextRequest) {
 
   const passwordHash = await hashPassword(password);
 
-  getDb().transaction(() => {
-    setPassword(reset.user_id, passwordHash, { mustChange: false });
-    consumePasswordReset(token);
-    invalidateResetsFor(reset.user_id);
-    deleteAllSessionsFor(reset.user_id);
-  })();
+  await transaction(async () => {
+    await setPassword(reset.user_id, passwordHash, { mustChange: false });
+    await consumePasswordReset(token);
+    await invalidateResetsFor(reset.user_id);
+    await deleteAllSessionsFor(reset.user_id);
+  });
 
   return NextResponse.json({ ok: true, next: "/login?reset=1" });
 }

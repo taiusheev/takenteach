@@ -1,15 +1,16 @@
-import { createDefaultStyleKit, getDb } from "@/lib/db";
+import { createDefaultStyleKit } from "@/lib/db";
+import { all, insert, one, run } from "@/lib/pg";
 import { type OrgRole } from "@/lib/workflow";
 import { expiryFromNow, hashToken, nowStamp } from "./tokens";
 
 /**
  * Every query the identity tables need, in one place.
  *
- * Deliberately NOT in lib/db.ts. That file is 1,400 lines and owns the content
- * model; identity is a self-contained surface with its own five tables, and the
- * two only meet through `getDb()`. The schema itself still lives in db.ts's
- * `createDb()`, because that is the one place the database is created — a table
- * defined anywhere else would exist only after something happened to import it.
+ * Deliberately NOT in lib/db.ts. That file owns the content model; identity is
+ * a self-contained surface with its own five tables, and the two only meet
+ * through the query layer in lib/pg.ts. The schema itself lives in
+ * lib/schema.ts, which owns the DDL for both halves — a table defined anywhere
+ * else would exist only after something happened to import it.
  *
  * These functions are not org-scoped and that is correct: they ARE the tenancy
  * layer. An organization lookup cannot be filtered by an organization, and a
@@ -90,7 +91,7 @@ export function normalizeEmail(email: string): string {
  * Two schools called "St Mary's" is not an edge case, it is Tuesday, so the
  * collision path is the normal path and gets a counter rather than an error.
  */
-export function uniqueSlug(name: string): string {
+export async function uniqueSlug(name: string): Promise<string> {
   const base =
     name
       .toLowerCase()
@@ -99,37 +100,35 @@ export function uniqueSlug(name: string): string {
       .replace(/^-+|-+$/g, "")
       .slice(0, 48) || "org";
 
-  const db = getDb();
-  const taken = db.prepare("SELECT 1 FROM organizations WHERE slug = ?");
-  if (!taken.get(base)) return base;
+  const taken = async (slug: string) =>
+    Boolean(await one("SELECT 1 FROM organizations WHERE slug = ?", [slug]));
+
+  if (!(await taken(base))) return base;
   for (let n = 2; n < 1000; n++) {
     const candidate = `${base}-${n}`;
-    if (!taken.get(candidate)) return candidate;
+    if (!(await taken(candidate))) return candidate;
   }
   // 998 organizations with the same name is not a case worth a nicer answer.
   return `${base}-${Date.now()}`;
 }
 
-export function createOrganization(input: {
+export async function createOrganization(input: {
   name: string;
   kind: OrgKind;
   location?: string;
   sizeBand?: string;
-}): OrgRow {
-  const db = getDb();
-  const info = db
-    .prepare(
-      `INSERT INTO organizations (slug, name, kind, location, size_band)
-       VALUES (?, ?, ?, ?, ?)`
-    )
-    .run(
-      uniqueSlug(input.name),
+}): Promise<OrgRow> {
+  const orgId = await insert(
+    `INSERT INTO organizations (slug, name, kind, location, size_band)
+     VALUES (?, ?, ?, ?, ?)`,
+    [
+      await uniqueSlug(input.name),
       input.name.trim(),
       input.kind,
       input.location?.trim() ?? "",
-      input.sizeBand?.trim() ?? ""
-    );
-  const orgId = Number(info.lastInsertRowid);
+      input.sizeBand?.trim() ?? "",
+    ]
+  );
 
   /* Every organization gets its own default Style Kit, here, so one cannot
      exist without one — every builder screen assumes a kit is selectable, and
@@ -140,21 +139,19 @@ export function createOrganization(input: {
      twice — a fresh database has no organization for it to belong to, and "the
      default kit" stopped being a property of the installation. Without this,
      the first school to edit theirs would restyle every other school's covers. */
-  createDefaultStyleKit(orgId);
+  await createDefaultStyleKit(orgId);
 
-  return getOrganization(orgId)!;
+  return (await getOrganization(orgId))!;
 }
 
-export function getOrganization(id: number): OrgRow | undefined {
-  return getDb()
-    .prepare("SELECT * FROM organizations WHERE id = ?")
-    .get(id) as OrgRow | undefined;
+export async function getOrganization(id: number): Promise<OrgRow | undefined> {
+  return one<OrgRow>("SELECT * FROM organizations WHERE id = ?", [id]);
 }
 
-export function getOrganizationBySlug(slug: string): OrgRow | undefined {
-  return getDb()
-    .prepare("SELECT * FROM organizations WHERE slug = ?")
-    .get(slug) as OrgRow | undefined;
+export async function getOrganizationBySlug(
+  slug: string
+): Promise<OrgRow | undefined> {
+  return one<OrgRow>("SELECT * FROM organizations WHERE slug = ?", [slug]);
 }
 
 /**
@@ -162,134 +159,137 @@ export function getOrganizationBySlug(slug: string): OrgRow | undefined {
  *
  * Only `kind = 'school'`: personal workspaces are not joinable, and listing them
  * would expose every solo user's name to anyone typing into a signup box.
+ *
+ * `ILIKE` is Postgres's spelling of what `LIKE ? COLLATE NOCASE` did on SQLite.
+ * It is not merely a rename — NOCASE folded ASCII only, and ILIKE folds by the
+ * database's locale, so "École" now matches "école" where it did not before.
+ * That is the behaviour a school-name search should have had all along.
  */
-export function findSchoolsByName(query: string, limit = 8): OrgRow[] {
+export async function findSchoolsByName(
+  query: string,
+  limit = 8
+): Promise<OrgRow[]> {
   const q = query.trim();
   if (q.length < 2) return [];
-  return getDb()
-    .prepare(
-      `SELECT * FROM organizations
-        WHERE kind = 'school' AND name LIKE ? COLLATE NOCASE
-        ORDER BY name LIMIT ?`
-    )
-    .all(`%${q}%`, limit) as OrgRow[];
+  return all<OrgRow>(
+    `SELECT * FROM organizations
+      WHERE kind = 'school' AND name ILIKE ?
+      ORDER BY name LIMIT ?`,
+    [`%${q}%`, limit]
+  );
 }
 
 /* ── Users ───────────────────────────────────────────────────────────────── */
 
-export function createUser(input: {
+export async function createUser(input: {
   email: string;
   passwordHash: string;
   name: string;
   platformRole?: PlatformRole;
   mustChangePassword?: boolean;
-}): UserRow {
-  const db = getDb();
-  const info = db
-    .prepare(
-      `INSERT INTO users (email, password_hash, name, platform_role, must_change_password)
-       VALUES (?, ?, ?, ?, ?)`
-    )
-    .run(
+}): Promise<UserRow> {
+  const id = await insert(
+    `INSERT INTO users (email, password_hash, name, platform_role, must_change_password)
+     VALUES (?, ?, ?, ?, ?)`,
+    [
       normalizeEmail(input.email),
       input.passwordHash,
       input.name.trim(),
       input.platformRole ?? "user",
-      input.mustChangePassword ? 1 : 0
-    );
-  return getUser(Number(info.lastInsertRowid))!;
+      input.mustChangePassword ? 1 : 0,
+    ]
+  );
+  return (await getUser(id))!;
 }
 
-export function getUser(id: number): UserRow | undefined {
-  return getDb().prepare("SELECT * FROM users WHERE id = ?").get(id) as
-    | UserRow
-    | undefined;
+export async function getUser(id: number): Promise<UserRow | undefined> {
+  return one<UserRow>("SELECT * FROM users WHERE id = ?", [id]);
 }
 
-export function getUserByEmail(email: string): UserRow | undefined {
-  return getDb()
-    .prepare("SELECT * FROM users WHERE email = ?")
-    .get(normalizeEmail(email)) as UserRow | undefined;
+export async function getUserByEmail(
+  email: string
+): Promise<UserRow | undefined> {
+  return one<UserRow>("SELECT * FROM users WHERE email = ?", [
+    normalizeEmail(email),
+  ]);
 }
 
-export function setPassword(
+export async function setPassword(
   userId: number,
   passwordHash: string,
   { mustChange = false }: { mustChange?: boolean } = {}
-): void {
-  getDb()
-    .prepare(
-      "UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?"
-    )
-    .run(passwordHash, mustChange ? 1 : 0, userId);
+): Promise<void> {
+  await run(
+    "UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?",
+    [passwordHash, mustChange ? 1 : 0, userId]
+  );
 }
 
-export function markLoggedIn(userId: number): void {
-  getDb()
-    .prepare("UPDATE users SET last_login_at = ? WHERE id = ?")
-    .run(nowStamp(), userId);
+export async function markLoggedIn(userId: number): Promise<void> {
+  await run("UPDATE users SET last_login_at = ? WHERE id = ?", [
+    nowStamp(),
+    userId,
+  ]);
 }
 
 /* ── Memberships ─────────────────────────────────────────────────────────── */
 
-export function createMembership(input: {
+export async function createMembership(input: {
   userId: number;
   orgId: number;
   orgRole: OrgRole;
   status: MembershipStatus;
   approvedBy?: number;
-}): MembershipRow {
-  const db = getDb();
+}): Promise<MembershipRow> {
   const approved = input.status === "active" ? nowStamp() : null;
-  const info = db
-    .prepare(
-      `INSERT INTO memberships (user_id, org_id, org_role, status, approved_at, approved_by)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    )
-    .run(
+  const id = await insert(
+    `INSERT INTO memberships (user_id, org_id, org_role, status, approved_at, approved_by)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
       input.userId,
       input.orgId,
       input.orgRole,
       input.status,
       approved,
-      input.approvedBy ?? null
-    );
-  return db
-    .prepare("SELECT * FROM memberships WHERE id = ?")
-    .get(Number(info.lastInsertRowid)) as MembershipRow;
+      input.approvedBy ?? null,
+    ]
+  );
+  return (await one<MembershipRow>("SELECT * FROM memberships WHERE id = ?", [
+    id,
+  ]))!;
 }
 
 /** Every organization this user belongs to, in any state. */
-export function listMemberships(userId: number): MembershipWithOrg[] {
-  return getDb()
-    .prepare(
-      `SELECT o.id      AS orgId,
-              o.name    AS orgName,
-              o.slug    AS orgSlug,
-              o.kind    AS orgKind,
-              m.org_role AS orgRole,
-              m.status  AS status
-         FROM memberships m
-         JOIN organizations o ON o.id = m.org_id
-        WHERE m.user_id = ?
-        ORDER BY (o.kind = 'school') DESC, o.name`
-    )
-    .all(userId) as MembershipWithOrg[];
+export async function listMemberships(
+  userId: number
+): Promise<MembershipWithOrg[]> {
+  return all<MembershipWithOrg>(
+    `SELECT o.id       AS "orgId",
+            o.name     AS "orgName",
+            o.slug     AS "orgSlug",
+            o.kind     AS "orgKind",
+            m.org_role AS "orgRole",
+            m.status   AS status
+       FROM memberships m
+       JOIN organizations o ON o.id = m.org_id
+      WHERE m.user_id = ?
+      ORDER BY (o.kind = 'school') DESC, o.name`,
+    [userId]
+  );
 }
 
-export function getMembership(
+export async function getMembership(
   userId: number,
   orgId: number
-): MembershipWithOrg | undefined {
-  return getDb()
-    .prepare(
-      `SELECT o.id AS orgId, o.name AS orgName, o.slug AS orgSlug,
-              o.kind AS orgKind, m.org_role AS orgRole, m.status AS status
-         FROM memberships m
-         JOIN organizations o ON o.id = m.org_id
-        WHERE m.user_id = ? AND m.org_id = ?`
-    )
-    .get(userId, orgId) as MembershipWithOrg | undefined;
+): Promise<MembershipWithOrg | undefined> {
+  return one<MembershipWithOrg>(
+    `SELECT o.id AS "orgId", o.name AS "orgName", o.slug AS "orgSlug",
+            o.kind AS "orgKind", m.org_role AS "orgRole", m.status AS status
+       FROM memberships m
+       JOIN organizations o ON o.id = m.org_id
+      WHERE m.user_id = ? AND m.org_id = ?`,
+    [userId, orgId]
+  );
 }
 
 /* ── Sessions ────────────────────────────────────────────────────────────── */
@@ -309,25 +309,24 @@ export interface SessionRecord {
   membershipStatus: MembershipStatus;
 }
 
-export function createSessionRow(input: {
+export async function createSessionRow(input: {
   token: string;
   userId: number;
   activeOrgId: number;
   ttlSeconds: number;
   userAgent?: string;
-}): void {
-  getDb()
-    .prepare(
-      `INSERT INTO sessions (token_hash, user_id, active_org_id, expires_at, user_agent)
-       VALUES (?, ?, ?, ?, ?)`
-    )
-    .run(
+}): Promise<void> {
+  await run(
+    `INSERT INTO sessions (token_hash, user_id, active_org_id, expires_at, user_agent)
+     VALUES (?, ?, ?, ?, ?)`,
+    [
       hashToken(input.token),
       input.userId,
       input.activeOrgId,
       expiryFromNow(input.ttlSeconds),
-      (input.userAgent ?? "").slice(0, 200)
-    );
+      (input.userAgent ?? "").slice(0, 200),
+    ]
+  );
 }
 
 /**
@@ -342,66 +341,81 @@ export function createSessionRow(input: {
  * removing someone from an organization has to work on their next request, not
  * once their cookie happens to expire.
  */
-export function readSessionRecord(token: string): SessionRecord | undefined {
-  return getDb()
-    .prepare(
-      `SELECT u.id            AS userId,
-              u.email         AS email,
-              u.name          AS name,
-              u.platform_role AS platformRole,
-              u.must_change_password AS mustChangePassword,
-              o.id            AS orgId,
-              o.name          AS orgName,
-              o.slug          AS orgSlug,
-              o.kind          AS orgKind,
-              m.org_role      AS orgRole,
-              m.status        AS membershipStatus
-         FROM sessions s
-         JOIN users u         ON u.id = s.user_id
-         JOIN organizations o ON o.id = s.active_org_id
-         JOIN memberships m   ON m.user_id = s.user_id AND m.org_id = s.active_org_id
-        WHERE s.token_hash = ? AND s.expires_at > ?`
-    )
-    .get(hashToken(token), nowStamp()) as SessionRecord | undefined;
+export async function readSessionRecord(
+  token: string
+): Promise<SessionRecord | undefined> {
+  const row = await one<
+    Omit<SessionRecord, "mustChangePassword"> & { mustChangePassword: number }
+  >(
+    `SELECT u.id            AS "userId",
+            u.email         AS email,
+            u.name          AS name,
+            u.platform_role AS "platformRole",
+            u.must_change_password AS "mustChangePassword",
+            o.id            AS "orgId",
+            o.name          AS "orgName",
+            o.slug          AS "orgSlug",
+            o.kind          AS "orgKind",
+            m.org_role      AS "orgRole",
+            m.status        AS "membershipStatus"
+       FROM sessions s
+       JOIN users u         ON u.id = s.user_id
+       JOIN organizations o ON o.id = s.active_org_id
+       JOIN memberships m   ON m.user_id = s.user_id AND m.org_id = s.active_org_id
+      WHERE s.token_hash = ? AND s.expires_at > ?`,
+    [hashToken(token), nowStamp()]
+  );
+  /* `must_change_password` is an integer column and the DAL treats this field as
+     a boolean — `if (session.mustChangePassword)`. Under SQLite that worked by
+     accident, because 0 is falsy. It still would here, but the field is DECLARED
+     boolean and returning a number from a function that promises one is the kind
+     of small lie that survives until someone writes `=== true`. */
+  return row ? { ...row, mustChangePassword: Boolean(row.mustChangePassword) } : undefined;
 }
 
-export function touchSession(token: string): void {
-  getDb()
-    .prepare("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?")
-    .run(nowStamp(), hashToken(token));
+export async function touchSession(token: string): Promise<void> {
+  await run("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?", [
+    nowStamp(),
+    hashToken(token),
+  ]);
 }
 
-export function switchSessionOrg(token: string, orgId: number): void {
-  getDb()
-    .prepare("UPDATE sessions SET active_org_id = ? WHERE token_hash = ?")
-    .run(orgId, hashToken(token));
+export async function switchSessionOrg(
+  token: string,
+  orgId: number
+): Promise<void> {
+  await run("UPDATE sessions SET active_org_id = ? WHERE token_hash = ?", [
+    orgId,
+    hashToken(token),
+  ]);
 }
 
-export function deleteSession(token: string): void {
-  getDb()
-    .prepare("DELETE FROM sessions WHERE token_hash = ?")
-    .run(hashToken(token));
+export async function deleteSession(token: string): Promise<void> {
+  await run("DELETE FROM sessions WHERE token_hash = ?", [hashToken(token)]);
 }
 
 /** Every session for a user — what a password change has to invalidate. */
-export function deleteAllSessionsFor(userId: number): void {
-  getDb().prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+export async function deleteAllSessionsFor(userId: number): Promise<void> {
+  await run("DELETE FROM sessions WHERE user_id = ?", [userId]);
 }
 
 /** Housekeeping. Cheap, and stops the table growing without bound. */
-export function purgeExpiredSessions(): void {
-  getDb().prepare("DELETE FROM sessions WHERE expires_at <= ?").run(nowStamp());
+export async function purgeExpiredSessions(): Promise<void> {
+  await run("DELETE FROM sessions WHERE expires_at <= ?", [nowStamp()]);
 }
 
 /* ── Password resets ─────────────────────────────────────────────────────── */
 
-export function createPasswordReset(userId: number, token: string, ttlSeconds: number): void {
-  getDb()
-    .prepare(
-      `INSERT INTO password_resets (token_hash, user_id, expires_at)
-       VALUES (?, ?, ?)`
-    )
-    .run(hashToken(token), userId, expiryFromNow(ttlSeconds));
+export async function createPasswordReset(
+  userId: number,
+  token: string,
+  ttlSeconds: number
+): Promise<void> {
+  await run(
+    `INSERT INTO password_resets (token_hash, user_id, expires_at)
+     VALUES (?, ?, ?)`,
+    [hashToken(token), userId, expiryFromNow(ttlSeconds)]
+  );
 }
 
 /**
@@ -410,26 +424,27 @@ export function createPasswordReset(userId: number, token: string, ttlSeconds: n
  * Both conditions are in the query for the same reason expiry is on sessions —
  * a spent link and a live one must not differ by a check the caller could skip.
  */
-export function readPasswordReset(token: string): { user_id: number } | undefined {
-  return getDb()
-    .prepare(
-      `SELECT user_id FROM password_resets
-        WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`
-    )
-    .get(hashToken(token), nowStamp()) as { user_id: number } | undefined;
+export async function readPasswordReset(
+  token: string
+): Promise<{ user_id: number } | undefined> {
+  return one<{ user_id: number }>(
+    `SELECT user_id FROM password_resets
+      WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`,
+    [hashToken(token), nowStamp()]
+  );
 }
 
-export function consumePasswordReset(token: string): void {
-  getDb()
-    .prepare("UPDATE password_resets SET used_at = ? WHERE token_hash = ?")
-    .run(nowStamp(), hashToken(token));
+export async function consumePasswordReset(token: string): Promise<void> {
+  await run("UPDATE password_resets SET used_at = ? WHERE token_hash = ?", [
+    nowStamp(),
+    hashToken(token),
+  ]);
 }
 
 /** Outstanding links for a user, killed when they set a new password by any route. */
-export function invalidateResetsFor(userId: number): void {
-  getDb()
-    .prepare(
-      "UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL"
-    )
-    .run(nowStamp(), userId);
+export async function invalidateResetsFor(userId: number): Promise<void> {
+  await run(
+    "UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL",
+    [nowStamp(), userId]
+  );
 }

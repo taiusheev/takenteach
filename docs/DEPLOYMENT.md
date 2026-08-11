@@ -176,7 +176,7 @@ Each step leaves a working application.
 |---|---|---|
 | **1. Repo** ✅ | `git init`, `.gitattributes`, `.env.example`, real README | Everything else deploys from it. Local commits only — no remote configured, nothing pushed. |
 | **2a. Postgres layer** ✅ | `lib/pg.ts` + 11 tests | Proven before anything is ported onto it. |
-| **2b. Postgres port** | Port `lib/db.ts` + `lib/auth/store.ts`; async-ify; migrate the data; re-run `lib/tenancy.test.ts` against Postgres | The biggest mechanical change, and the tenancy test proves it landed intact. |
+| **2b. Postgres port** ✅ | Ported `lib/db.ts` + `lib/auth/store.ts`; async-ified 114 call sites; `scripts/db-import.mjs`; tenancy re-proved on Postgres | The biggest mechanical change, and the tenancy test proves it landed intact. |
 | **3. Stage the build** | One request per generation stage; measure each against 60 s | The blocker that is *not* fixed by step 2. |
 | **4. De-globalise** | Budget mode to the database; park the overnight runner | Small, and step 3 makes it obvious what is left. |
 | **5. Email** | Implement Resend in `lib/mail.ts` (the seam is already there) | Password resets stop silently dropping. |
@@ -193,55 +193,106 @@ double-proxying causes redirect loops and breaks Vercel's certificate issuance.
 
 ## 7a. Where the port actually stands
 
-**The application still runs on SQLite and is fully working.** That is deliberate: the
-async conversion in the next step is all-or-nothing — half of it leaves the app broken —
-so it starts from a clean, committed, green checkpoint rather than in the middle of one.
-
-Done:
+**Step 2 is done. The application runs on Postgres.** `better-sqlite3` is gone from the
+runtime — nothing under `app/` or `lib/` imports it, and it survives only as a
+devDependency for the one-off import and the legacy backup script.
 
 - **Repo.** `git init`, `.gitattributes` (LF normalisation, or a Windows checkout commits
-  CRLF and every later diff is the whole file), `.env.example`, a real README. Two local
-  commits, no remote, nothing pushed. `data/*.db` and `.env*` are excluded.
+  CRLF and every later diff is the whole file), `.env.example`, a real README. Local
+  commits, no remote, nothing pushed. `data/*.db`, `.pglite/` and `.env*` are excluded.
 - **`lib/pg.ts` + `lib/pg.test.ts`.** Placeholder conversion, ALS-carried transactions,
-  `pg`/PGlite behind one interface. 11 tests including parameter ordering and rollback.
-
+  `pg`/PGlite behind one interface.
 - **`lib/schema.ts` + `lib/schema.test.ts` + `npm run db:migrate`.** The DDL, translated
   and validated against PGlite. **This closed the phase 2 gap**: `org_id` is now a real
-  `NOT NULL REFERENCES`, which SQLite's `ALTER TABLE` could not express. 7 tests, and
-  they assert the *constraints* rather than that the SQL merely parses.
+  `NOT NULL REFERENCES`, which SQLite's `ALTER TABLE` could not express.
+- **`lib/db.ts` and `lib/auth/store.ts`, async.** `createDb`, `migrateTenancy`,
+  `migrateCorrectionsFk`, `assertNoOrphans`, `createIndexes` and `getDb` are all deleted;
+  the schema file owns that job. The recipe in §7c held with no surprises.
+- **114 call sites awaited** across 41 files. `tsc` found all of them — 393 errors that
+  went to zero — exactly as the phase 2 technique predicted.
+- **`scripts/db-import.mjs` (`npm run db:import`).** The library, ids intact.
+- **98 tests, all passing**, including tenancy and the identity store on Postgres.
 
-Remaining, in order:
+### What the port found that a type-checker could not
 
-1. **Async-ify** `lib/db.ts` and `lib/auth/store.ts`, then let `tsc` enumerate the ~130
-   call sites — the technique that found 113 in phase 2 and missed none.
+Four real defects, none of which `tsc` can see, all now covered by tests:
 
-   The mechanical recipe, so this is a well-specified job rather than a reading exercise:
+1. **`bigint` came back as a string.** Every id and `COUNT(*)` in the schema is `bigint`;
+   `pg` decodes int8 as a **string** and PGlite decodes it as a **number**. Left alone,
+   the whole suite would have passed on PGlite while production served `"13"` as every
+   material id and `id === 13` was quietly false. Fixed once in `lib/pg.ts` with an int8
+   type parser that refuses values past `Number.MAX_SAFE_INTEGER` rather than rounding
+   them, so the two drivers are genuinely indistinguishable.
+2. **Column aliases fold to lower case.** `SELECT u.id AS userId` returns `userid` on
+   Postgres, so every field of `SessionRecord` would have been `undefined` — an
+   application-wide outage caused by six missing quote marks, invisible to `tsc` because
+   the row is cast to the interface. All identity aliases are now quoted, and
+   `lib/auth/store.test.ts` asserts them field by field.
+3. **The session row was written fire-and-forget.** `startSession` did not await
+   `createSessionRow`, which was free when the write was synchronous. On Postgres the
+   browser could receive its cookie before the row existed; on serverless the instance
+   can be frozen the moment the response is sent, so the insert may never land and the
+   sign-in fails silently. `startSession` and `endSession` are async and awaited now.
+4. **The signup race check tested SQLite's error text.** `String(err).includes("UNIQUE")`
+   never matches Postgres's "duplicate key value violates unique constraint", so a lost
+   signup race would have become a 500 instead of "that email is taken". Now matched on
+   SQLSTATE `23505`.
 
-   | From | To |
-   |---|---|
-   | `getDb().prepare(S).all(a, b)` | `await all(S, [a, b])` |
-   | `.get(a)` | `await one(S, [a])` |
-   | `.run(a)` | `await run(S, [a])` |
-   | `.run(...).lastInsertRowid` | `await insert(S, [...])` (appends `RETURNING id`) |
-   | `db.transaction(() => {…})()` | `await transaction(async () => {…})` |
-   | `export function f(): T` | `export async function f(): Promise<T>` |
-   | `datetime('now')` in a query | `to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS')` — exported as `SQL_NOW` |
-   | `json_extract(content, '$.series')` | `content::jsonb ->> 'series'` |
-   | `LIKE ? COLLATE NOCASE` | `ILIKE ?` |
+### Verified
 
-   Then delete `createDb`, `migrateTenancy`, `migrateCorrectionsFk`, `assertNoOrphans`
-   and `createIndexes` — the schema file owns all of that now — and drop the
-   `better-sqlite3` dependency.
+- `npx tsc --noEmit` clean; `npm run lint` clean; `npx next build` succeeds.
+- `npm test` — 98 passing.
+- **The mutation check was re-run**, because a green tenancy suite is only evidence if it
+  can fail. Removing the org filter from `visibleTo` fails 2 tests; also dropping the
+  `WHERE org_id` from `setDefaultStyleKit` (the real historical bug) fails a 3rd; also
+  dropping it from `updateStyleKit` fails a 4th. Unquoting the `readSessionRecord`
+  aliases fails the session test. Each defect is caught by the test written for it.
+- **The import was run end to end** against a real Postgres database and the library read
+  back through `listMaterials`/`getMaterial` — 9 materials with their original ids
+  (14, 16, 22, 24, 25, 27, 31, 32, 33), content re-parsed through the zod schemas,
+  activity, kits, students, rounds and corrections all present.
 
-2. **Point `lib/tenancy.test.ts` at PGlite** (it already targets a throwaway database via
-   `TAKENTEACH_DB`; it becomes `ensureSchema()` plus the existing assertions) and re-run
-   the mutation check, so isolation is proven on Postgres rather than assumed to have
-   survived the port.
+**Note on the counts in §3:** they said 13 materials. The database holds **9**. The other
+numbers were right. Nothing was lost — §3 was written from a stale count.
 
-3. **Migrate the data**: 13 materials, 2 kits, 2 students, 2 rounds, 6 corrections, 2
-   accounts, 2 organizations. Ids must be preserved — `materials.forked_from`,
-   `rounds.ballot_id` and every child table reference them — so the import inserts with
-   explicit ids and then fixes each sequence with `setval`.
+## 7c. The conversion recipe, as it was actually applied
+
+| From | To |
+|---|---|
+| `getDb().prepare(S).all(a, b)` | `await all(S, [a, b])` |
+| `.get(a)` | `await one(S, [a])` |
+| `.run(a)` | `await run(S, [a])` |
+| `.run(...).lastInsertRowid` | `await insert(S, [...])` (appends `RETURNING id`) |
+| `db.transaction(() => {…})()` | `await transaction(async () => {…})` |
+| `export function f(): T` | `export async function f(): Promise<T>` |
+| `datetime('now')` in a query | `SQL_NOW` from `lib/schema.ts` |
+| `json_extract(content, '$.series')` | `content::jsonb ->> 'series'` |
+| `LIKE ? COLLATE NOCASE` | `ILIKE ?` |
+| `AS camelCase` | `AS "camelCase"` — **not optional**, see defect 2 |
+| `f(...).map(g)` | `(await f(...)).map(g)` — never `await f(...).map(g)` |
+
+One caveat worth carrying forward: `await` inside a synchronous `.map()` callback does not
+compile, and the fix is `await Promise.all(xs.map(async …))`. That pattern appears in
+`app/rounds`, `app/style-kits` and `app/review`, and each is an N+1 — one query per row.
+Harmless at this size and worth folding into a single `GROUP BY` before the library is
+large. It is not a correctness problem and was deliberately left out of this change.
+
+## 7b. Running it locally
+
+The database is no longer a file the app creates on demand. With no `DATABASE_URL`,
+`lib/pg.ts` runs PGlite in-process; point `PGLITE_PATH` at a directory to keep it:
+
+```
+PGLITE_PATH=.pglite        # in .env.local
+npm run db:migrate         # create the tables
+npm run db:import          # copy data/ascent.db in, ids intact
+```
+
+`npm run db:import` refuses to run against a non-empty database unless given `--force`.
+It deliberately does **not** copy `sessions` or `password_resets`: both are live
+credentials, and carrying an unspent reset token into production is a risk with no
+matching benefit. Everyone signs in again after the move, which is the correct behaviour
+for a database that has changed machines.
 
 ## 7b. One thing to do before deploying, unrelated to the port
 
@@ -266,8 +317,12 @@ dashboard, not into this chat.
 3. **Your `ANTHROPIC_API_KEY`** moved into Vercel's env vars. It is currently in
    `.env.local`, which is gitignored and stays that way.
 4. **A decision on apex vs `app.`** — see §7.
-5. **Confirmation on §6** (keep the existing auth) before I start step 2, because it
-   changes what the Postgres port has to carry.
+5. ~~**Confirmation on §6** (keep the existing auth) before I start step 2.~~ Step 2 is
+   done and it kept the existing auth, which was the recommendation and the lower-risk
+   path — the scrypt hashing, the session rows and the DAL all moved to Postgres
+   unchanged. If you would still rather have Supabase Auth, say so: it is now a
+   replacement of working code rather than a fork in the road, and §6 still argues
+   against it.
 
 ---
 
@@ -275,7 +330,7 @@ dashboard, not into this chat.
 
 | | Effort |
 |---|---|
-| Postgres port | The bulk of it. Mechanical, type-checked, one to two sessions. |
+| Postgres port ✅ | The bulk of it, and it landed in one session — mechanical and type-checked, as predicted. The cost was not the SQL; it was the four defects in §7a that types could not see. |
 | Staged generation | Smaller, more interesting, and improves the product for real users. |
 | De-globalising state | An afternoon, mostly deletion. |
 | Email + deploy config | Small. |

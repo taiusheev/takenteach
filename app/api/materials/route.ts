@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
   const body = parsed.data;
 
   const subject: Subject = body.subject;
-  const kit = listStyleKits(scope).find((k) => k.is_default === 1);
+  const kit = (await listStyleKits(scope)).find((k) => k.is_default === 1);
   if (!kit) {
     return serverError(
       "There is no default Style Kit — every material inherits one, so nothing can be created until a kit is marked default."
@@ -113,7 +113,7 @@ export async function POST(req: NextRequest) {
         }
       : {}),
   });
-  const id = createMaterial(scope, 
+  const id = await createMaterial(scope, 
     body.title || `Untitled ${typeDef.label.toLowerCase()}`,
     kit.id,
     content,

@@ -19,7 +19,7 @@ export default async function UnitPage({
   const { subject, series } = parseUnitKey(key);
   const seriesKey = series.trim().toLowerCase();
 
-  const lessons = listMaterials(scope)
+  const lessons = (await listMaterials(scope))
     .filter(
       (m) =>
         m.type === "lesson-pack" &&

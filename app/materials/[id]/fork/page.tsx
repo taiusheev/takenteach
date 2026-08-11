@@ -16,7 +16,7 @@ export default async function ForkPage(ctx: {
 }) {
   const { legacyRole: role, scope } = await requireActiveSession();
   const { id } = await ctx.params;
-  const source = getMaterial(scope, Number(id));
+  const source = await getMaterial(scope, Number(id));
   if (!source) notFound();
 
   if (!canCreate(role)) {

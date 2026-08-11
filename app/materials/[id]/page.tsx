@@ -55,15 +55,15 @@ export default async function MaterialPage(ctx: {
 }) {
   const { legacyRole: role, scope } = await requireActiveSession();
   const { id } = await ctx.params;
-  const material = getMaterial(scope, Number(id));
+  const material = await getMaterial(scope, Number(id));
   if (!material) notFound();
 
   const editable = canEdit(material.status, role);
   const isPack = material.type === "lesson-pack";
-  const source = material.forked_from ? getMaterial(scope, material.forked_from) : null;
-  const kit = getKitForMaterial(scope, material.style_kit_id);
-  const allKits = listStyleKits(scope);
-  const seriesSiblings = listSeriesSiblings(scope, 
+  const source = material.forked_from ? await getMaterial(scope, material.forked_from) : null;
+  const kit = await getKitForMaterial(scope, material.style_kit_id);
+  const allKits = await listStyleKits(scope);
+  const seriesSiblings = await listSeriesSiblings(scope, 
     material.subject,
     commonFields(material.content).series,
     material.id
@@ -96,13 +96,13 @@ export default async function MaterialPage(ctx: {
   }
 
   const transitions = availableTransitions(material.status, role);
-  const activity = listActivity(scope, material.id);
-  const corrections = listCorrectionsFor(scope, material.id);
+  const activity = await listActivity(scope, material.id);
+  const corrections = await listCorrectionsFor(scope, material.id);
   // what judged rounds say about the skill this lesson teaches
   const teachingSignal = computeTeachingSignal(
-    listRounds(scope),
-    listAllSubmissions(scope),
-    listMaterials(scope)
+    await listRounds(scope),
+    await listAllSubmissions(scope),
+    await listMaterials(scope)
   );
   const lessonSignal = isPack
     ? signalForLesson(teachingSignal, material.content as LessonPack)
@@ -121,7 +121,7 @@ export default async function MaterialPage(ctx: {
   const packContent = material.content as LessonPack;
   const readiness = isPack ? packReadiness(packContent) : null;
   const exemplar = isPack
-    ? getBestExemplar(scope, 
+    ? await getBestExemplar(scope, 
         material.subject,
         {
           skillFocus: packContent.skillFocus,

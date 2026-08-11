@@ -33,9 +33,9 @@ export async function GET(
   if (studentId === null) return notFound("No such student.");
   // A student in another organization is "no such student" for the same reason
   // a material in one 404s: the alternative confirms the row exists.
-  if (!getStudent(scope, studentId)) return notFound("No such student.");
+  if (!await getStudent(scope, studentId)) return notFound("No such student.");
 
-  return NextResponse.json({ observations: listObservations(scope, studentId) });
+  return NextResponse.json({ observations: await listObservations(scope, studentId) });
 }
 
 /**
@@ -54,13 +54,13 @@ export async function POST(
   const { id } = await ctx.params;
   const studentId = routeId(id);
   if (studentId === null) return notFound("No such student.");
-  const student = getStudent(scope, studentId);
+  const student = await getStudent(scope, studentId);
   if (!student) return notFound("No such student.");
   const parsed = await readBody(req, bodySchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
 
-  const observationId = logObservation({
+  const observationId = await logObservation({
     studentId: student.id,
     skill: body.skill,
     rating: body.rating,

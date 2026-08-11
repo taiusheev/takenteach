@@ -11,9 +11,9 @@ export default async function JudgePage(ctx: {
 }) {
   const { legacyRole: role, scope } = await requireActiveSession();
   const { id } = await ctx.params;
-  const round = getRound(scope, Number(id));
+  const round = await getRound(scope, Number(id));
   if (!round) notFound();
-  const ballotMaterial = getMaterial(scope, round.ballot_id);
+  const ballotMaterial = await getMaterial(scope, round.ballot_id);
   if (!ballotMaterial) notFound();
 
   return (

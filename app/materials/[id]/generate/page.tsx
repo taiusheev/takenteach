@@ -13,7 +13,7 @@ export default async function GeneratePage(ctx: {
 }) {
   const { legacyRole: role, scope } = await requireActiveSession();
   const { id } = await ctx.params;
-  const material = getMaterial(scope, Number(id));
+  const material = await getMaterial(scope, Number(id));
   if (!material) notFound();
 
   if (!canEdit(material.status, role)) {

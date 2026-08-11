@@ -26,13 +26,13 @@ const bodySchema = z.object({
  * to fill by hand). We read the codes already used and propose max+1 with the
  * same prefix — e.g. a series holding L1, L4 → "L5".
  */
-function nextLessonCode(
+async function nextLessonCode(
   scope: Scope,
   subject: Subject,
   series: string
-): string {
+): Promise<string> {
   if (!series.trim()) return "";
-  const codes = listSeriesSiblings(scope, subject, series, -1)
+  const codes = (await listSeriesSiblings(scope, subject, series, -1))
     .map((m) => ((m.content as LessonPack).lessonCode || "").trim())
     .filter(Boolean);
   let prefix = "L";
@@ -60,7 +60,11 @@ export async function POST(req: NextRequest) {
     // The planner reliably infers the series but often leaves the code blank —
     // fill it with the next free code so the author isn't asked for it.
     if (!plan.lessonCode?.trim() && plan.series?.trim()) {
-      plan.lessonCode = nextLessonCode(scope, plan.subject as Subject, plan.series);
+      plan.lessonCode = await nextLessonCode(
+        scope,
+        plan.subject as Subject,
+        plan.series
+      );
     }
     return NextResponse.json({ plan });
   } catch (err) {

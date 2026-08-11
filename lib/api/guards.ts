@@ -73,7 +73,7 @@ export async function loadMaterial(
   if (materialId === null) return { ok: false, response: notFound() };
   // Scoped in the query. Another organization's material is not forbidden here,
   // it simply does not exist — see the note at the top of this file.
-  const material = getMaterial(auth.session.scope, materialId);
+  const material = await getMaterial(auth.session.scope, materialId);
   if (!material) return { ok: false, response: notFound() };
   return { ok: true, material, session: auth.session };
 }
@@ -165,7 +165,7 @@ export async function loadFounderKit(
   const { id } = await ctx.params;
   const kitId = routeId(id);
   if (kitId === null) return { ok: false, response: notFound() };
-  const kit = getStyleKit(auth.session.scope, kitId);
+  const kit = await getStyleKit(auth.session.scope, kitId);
   if (!kit) return { ok: false, response: notFound() };
 
   const role = auth.session.legacyRole;

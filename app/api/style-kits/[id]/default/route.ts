@@ -13,6 +13,6 @@ export async function POST(
   if (!gate.ok) return gate.response;
   const scope = gate.session.scope;
 
-  setDefaultStyleKit(scope, gate.kit.id);
+  await setDefaultStyleKit(scope, gate.kit.id);
   return NextResponse.json({ ok: true });
 }
