@@ -1,0 +1,6 @@
+# Normalise line endings so a Windows checkout does not rewrite every file.
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.woff2 binary
+*.db binary

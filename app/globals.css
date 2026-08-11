@@ -1,0 +1,912 @@
+@import "tailwindcss";
+
+/* ══════════════════════════════════════════════════════════════════════════
+   TAKENTEACH — THE PRODUCT SURFACE
+   ══════════════════════════════════════════════════════════════════════════
+   Light surfaces so nothing feels hidden, high text contrast so nothing is hard
+   work, and a brand that is actually the brand. That last part is new: the app
+   ran on a deep teal that appears nowhere in the identity, so the mark on the
+   header and the product underneath it were two different companies.
+
+   The identity is a blue→violet gradient mark, a navy wordmark, and the line
+   "Lessons, faster. Teaching, better." Its five colours are below, doing the
+   jobs they do in the logo sheet rather than being sprinkled around:
+
+     #0A1F44  navy      the wordmark ink → every heading in the product
+     #2563EB  blue      the mark's primary → THE accent: buttons, links, focus
+     #7C3AED  violet    the mark's gradient end → the second half of any brand
+                        gradient, and the "AI did this" cue. Never body text.
+     #E0E7FF  periwinkle the light chip behind blue type
+     #F8FAFC  off-white the page
+
+   The discipline is unchanged and it is the point: every colour has a job
+   written next to it, and a colour with no job does not get added. Two
+   surfaces, three inks, two brand hues, three states. The gradient is allowed
+   in exactly three places (the mark, one primary button, one hero band), which
+   is what keeps it feeling like a brand rather than a theme.
+
+   A NOTE ON THE TOKEN NAMES. The `--color-ink*` names date from an older dark
+   theme, where "ink" meant the darkest surface. Under a light theme the value
+   inverts: `bg-ink` is now the palest page background, and `text-ink` is the
+   light type that sits on a filled brand chip. Both still render correctly
+   everywhere they are used, so the names were kept rather than rewritten across
+   forty files — but new code should prefer the `--color-surface*` /
+   `--color-onbrand` aliases below, which say what they mean. */
+:root {
+  /* surfaces — page, panel, subtle fill. The page is the identity's own
+     off-white, so the product sits on the same paper as the brand sheet. */
+  --surface-1: #f8fafc;
+  --surface-2: #ffffff;
+  --surface-3: #f1f5f9;
+  --line: #e2e8f0;
+  --line-strong: #cbd5e1;
+
+  /* ink — headings, body, muted. Headings are the wordmark's own navy rather
+     than a neutral near-black: it is the cheapest way for every page to carry
+     the brand without a single decorative element, and at 16.2:1 on white it is
+     a better heading colour than the grey it replaces. Body stays a soft slate
+     on purpose — full black body copy on white is harsher than it looks on
+     screen and reads as a wireframe. */
+  --text-1: #0a1f44;
+  --text-2: #475569;
+  --text-3: #64748b;
+
+  /* THE BRAND. The mark's blue, unmodified. It carries white type at 5.2:1, so
+     it can be a button, a chip and a focus ring without needing a second
+     "on-brand" variant per context. --brand-ink is the darker step for brand
+     type on a light surface, where the mid blue would be doing two jobs. */
+  --brand: #2563eb;
+  --brand-ink: #1d4ed8;
+  --brand-soft: #e0e7ff;
+  --onbrand: #ffffff;
+
+  /* THE SECOND HUE. The gradient's other end. It is a partner, not an equal:
+     it appears in gradients, in the AI/generation surfaces, and nowhere else.
+     Two accents used interchangeably is how a palette stops meaning anything. */
+  --brand-2: #7c3aed;
+  --brand-2-ink: #6d28d9;
+  --brand-2-soft: #ede9fe;
+
+  /* The navy, as a surface. Used for the one dark band the product has. */
+  --navy: #0a1f44;
+  --navy-2: #12306b;
+
+  /* The brand blue is a LIGHT-surface colour: on the navy it manages 3.1:1,
+     which is under AA for anything you have to read. This is the same blue
+     lifted to where it clears 6.4:1 on the band — for the wordmark's "Teach",
+     links and chips inside the hero. It has no job on a white page. */
+  --brand-lift: #60a5fa;
+
+  /* THE GRADIENT, once, so every use of it is the same gradient. 135° is the
+     angle the mark itself is lit at. */
+  --grad-brand: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+  --grad-deep: linear-gradient(135deg, #071634 0%, #0a1f44 45%, #2a1d6b 100%);
+
+  /* states — used for meaning only, never for emphasis */
+  --ok: #067647;
+  --warn: #b54708;
+  --danger: #b42318;
+
+  /* Elevation is a hairline plus a soft, low shadow. On a light surface a heavy
+     shadow reads as a pop-up; the job here is only to lift a card off the page.
+     The shadow is tinted with the navy rather than neutral black, so a stack of
+     cards reads slightly cool instead of slightly grey. */
+  --elev: 0 1px 2px rgba(10, 31, 68, 0.04), 0 1px 3px rgba(10, 31, 68, 0.06);
+  --elev-lg: 0 4px 6px -2px rgba(10, 31, 68, 0.03),
+    0 12px 16px -4px rgba(10, 31, 68, 0.1);
+  /* the one shadow that is allowed to be coloured: under a brand-filled button,
+     so the primary action looks lit rather than stuck on. */
+  --elev-brand: 0 1px 2px rgba(37, 99, 235, 0.24),
+    0 8px 20px -6px rgba(37, 99, 235, 0.42);
+
+  /* legacy aliases — see the note above */
+  --bg-dark: var(--surface-1);
+  --bg-mid: var(--surface-2);
+  --bg-card: var(--surface-2);
+  --border: var(--line);
+  --border-soft: var(--line);
+  --yellow: var(--brand);
+  --gold: var(--brand-ink);
+}
+
+@theme inline {
+  --color-ink: var(--surface-1);
+  --color-inkmid: var(--surface-2);
+  --color-inkcard: var(--surface-2);
+  --color-inkline: var(--line);
+  --color-fg1: var(--text-1);
+  --color-fg2: var(--text-2);
+  --color-fg3: var(--text-3);
+  --color-accent: var(--brand);
+  /* the names to reach for in new code */
+  --color-surface: var(--surface-2);
+  --color-surface-alt: var(--surface-3);
+  --color-brand: var(--brand);
+  --color-brandink: var(--brand-ink);
+  --color-brandsoft: var(--brand-soft);
+  --color-onbrand: var(--onbrand);
+  --color-line-strong: var(--line-strong);
+  /* the second hue and the dark band, as utilities */
+  --color-brand2: var(--brand-2);
+  --color-brand2ink: var(--brand-2-ink);
+  --color-brand2soft: var(--brand-2-soft);
+  --color-navy: var(--navy);
+  /* meaning colours, so a status stops being spelled `text-amber-700` in one
+     file and `text-orange-600` in the next */
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  /* Lexend for the interface, at every weight. Bebas is a POSTER face — it is
+     the right voice on a printed novice cover and the wrong one on a settings
+     screen, and using it for UI headings is most of why the app read as a
+     school worksheet rather than a tool. It stays available for print. */
+  --font-display: var(--font-lexend);
+  --font-sans: var(--font-lexend);
+  --font-mono: var(--font-techmono);
+}
+
+body {
+  background: var(--surface-1);
+  color: var(--text-2);
+  font-family: var(--font-lexend), sans-serif;
+  /* No ambient glows. The dark theme needed them because a flat near-black page
+     looks unfinished; a light surface does not, and a tinted wash on white is
+     the difference between "clean" and "slightly grubby". */
+  background-image: none;
+}
+
+/* The UI display face: Lexend, tightened. Tracking goes NEGATIVE at size —
+   Bebas needed +2px because condensed caps need air, and carrying that setting
+   over to a normal-width face is what made every heading look spaced out. */
+/* Type only — NO colour. It briefly set `color: var(--text-1)` here, which
+   silently beat `text-white` on every filled tile that also wanted the display
+   face and dropped five of them under 3:1. A font utility sets type. */
+.font-display {
+  font-family: var(--font-lexend), sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* ── Site-wide polish ────────────────────────────────────────────────── */
+/* A brand wash, with the page's own ink kept on top. It used to force white
+   type onto a 32% tint of the accent — over a white page that composites to a
+   pale blue carrying white text at about 1.8:1, i.e. selecting text made it
+   disappear. Selection has to stay readable; it is the one state the user
+   triggers while they are reading. */
+::selection {
+  background: color-mix(in srgb, var(--brand) 22%, transparent);
+  color: var(--text-1);
+}
+
+/* ── A RULE ABOUT WASHES ───────────────────────────────────────────────────
+   A tinted panel that carries its own ink — `bg-danger/N text-danger`, the
+   commonest pattern in this app — is only legible while N stays small. The ink
+   is fixed, so every point of N spends contrast the text needs: at /20 the
+   danger red measures 4.49:1 on its own wash, and at /25 it is worse. It used
+   to survive by accident, because the wash was a LIGHTER Tailwind shade
+   (red-500) than the text (red-700); once both became one token that accident
+   was gone.
+
+   So: semantic washes stop at /12, which leaves every pairing above 5:1. A tint
+   dark enough to threaten its own ink has stopped being a tint. If something
+   needs to be louder than /12, it wants a border or a filled chip, not a
+   heavier wash.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* ── Status chips ──────────────────────────────────────────────────────────
+   The workflow's four states, drawn from THIS palette.
+
+   They were four raw Tailwind hues — slate, amber, emerald, sky — which is a
+   second palette running through the most repeated component in the product
+   (one on every material card). Four unrelated hues next to a one-accent brand
+   is the difference between a designed surface and an assembled one.
+
+   The mapping is meant, not decorative:
+     draft      quiet. It is the resting state, not a status worth a colour, so
+                it takes muted ink on a plain fill and stops shouting.
+     in review  --warn. Something is waiting on a person.
+     approved   --ok.
+     published  --brand. The destination — the thing the whole product exists to
+                produce — so it wears the product's own colour rather than a
+                borrowed blue.
+
+   Each fill is a wash of its own ink over the panel, so the chip carries one
+   hue rather than a tint that has drifted from its text. */
+.chip {
+  --chip-ink: var(--text-3);
+  color: var(--chip-ink);
+  background: color-mix(in srgb, var(--chip-ink) 10%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--chip-ink) 28%, transparent);
+}
+/* Body ink, not muted: on its own 10% wash `--text-3` measured 4.40:1, just
+   under AA for 11px. Quiet is the intent, illegible is not. */
+.chip-draft { --chip-ink: var(--text-2); }
+.chip-review { --chip-ink: var(--warn); }
+.chip-approved { --chip-ink: var(--ok); }
+/* --brand-ink, not --brand, for exactly the reason recorded above the draft
+   chip: on its own 10% wash the mid blue measures 4.49:1 at 11px — one
+   hundredth under AA. The darker step measures 5.72:1 on the same wash and is
+   indistinguishable from it at chip size. */
+.chip-published { --chip-ink: var(--brand-ink); }
+
+/* One consistent keyboard-focus ring across every interactive element.
+ *
+ * SOLID, not a 70% mix. Softening the brand teal to 70% composited it to
+ * #559d98, which is 2.99:1 against the page surface — under the 3:1 WCAG 1.4.11
+ * asks of a focus indicator, and it scraped 3.08:1 on white panels. A focus ring
+ * is the one piece of UI whose entire job is to be unmissable, so it is the
+ * wrong place to spend contrast on softness. At full strength the same teal is
+ * 5.2:1 on the page and 5.5:1 on a panel.
+ *
+ * (`--yellow` is the brand teal — a legacy token name kept from the dark theme.) */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--yellow);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* On the navy band the brand blue ring measures 3.14:1 against the surface it
+   has to be seen on — technically over the 3:1 WCAG 1.4.11 asks for, and far
+   too close to it for the one indicator whose entire job is to be unmissable.
+   White is 15.6:1 there. The ring changes colour with the surface, not with the
+   component, so nothing has to remember to opt in. */
+.band-deep
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline-color: #fff;
+}
+
+/* quieter, on-theme scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  /* was #364764 — a value from the old dark theme that survived the move to a
+     light one, so the hover state was darker than anything else on the page */
+  background: var(--line-strong);
+}
+
+/* a reusable elevated-surface treatment for primary cards */
+.elevated {
+  box-shadow: var(--elev);
+}
+
+/* ── BRAND PRIMITIVES ──────────────────────────────────────────────────────
+   Four classes, because the same button was being re-typed as a nine-utility
+   string in eleven files and had drifted in nine of them — different radii,
+   two different hovers, one that had lost its focus ring entirely. A primary
+   action is one decision, so it is written down once.
+
+   `.btn-primary` is the only place in the interface where the brand gradient
+   fills something interactive. That is deliberate: if every button is a
+   gradient, none of them is the action. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 10px;
+  padding: 0.625rem 1rem;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease,
+    box-shadow 160ms ease, transform 160ms ease, opacity 160ms ease;
+}
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  color: var(--onbrand);
+  background-image: var(--grad-brand);
+  /* The fill is a gradient, so there is no background-COLOR to transition and
+     no border to tint. Depth does the hover instead: the shadow grows and the
+     button lifts 1px, which is legible without a second gradient to maintain. */
+  box-shadow: var(--elev-brand);
+  border: 1px solid transparent;
+}
+.btn-primary:hover:not(:disabled) {
+  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.28),
+    0 12px 26px -6px rgba(37, 99, 235, 0.5);
+  transform: translateY(-1px);
+}
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: var(--elev-brand);
+}
+
+.btn-secondary {
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  box-shadow: var(--elev);
+}
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  background: var(--surface-1);
+}
+
+/* The secondary action when the surface is the navy band. `.btn-secondary` is a
+   white panel, which on navy stops being secondary — it becomes the brightest
+   object on the screen and out-shouts the primary it is standing next to. */
+.btn-outline-light {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+}
+.btn-outline-light:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.48);
+}
+
+/* Destructive, and OUTLINED rather than filled. A filled red button is the
+   loudest object on any screen it appears on, which is exactly backwards: "Send
+   back" and "Unpublish" are the actions that should take a deliberate second
+   look, not the ones the eye is dragged to. Danger is a warning, not a rank. */
+.btn-danger {
+  color: var(--danger);
+  background: var(--surface-2);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+}
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--danger) 65%, transparent);
+}
+
+/* the third weight: no fill, no border, for the action that must be available
+   but must not compete — "Cancel", "Skip", a row-level "Print". */
+.btn-ghost {
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid transparent;
+}
+.btn-ghost:hover:not(:disabled) {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+.btn-sm {
+  padding: 0.375rem 0.75rem;
+  font-size: 13px;
+  border-radius: 8px;
+}
+
+/* The panel. Same three lines in every list, grid and sidebar in the product. */
+.card {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--elev);
+}
+/* only for cards that are themselves a link or a button */
+.card-interactive {
+  transition: border-color 160ms ease, box-shadow 160ms ease,
+    transform 160ms ease;
+}
+.card-interactive:hover {
+  border-color: color-mix(in srgb, var(--brand) 32%, var(--line));
+  box-shadow: var(--elev-lg);
+  transform: translateY(-2px);
+}
+
+/* Brand type. Used for ONE word per screen at most — the wordmark's "Teach",
+   a hero's last clause. `background-clip: text` fails to a flat colour in the
+   rare engine that lacks it, so the fallback colour is set first and is a
+   colour we would have been happy with anyway. */
+.text-gradient {
+  color: var(--brand);
+  background-image: var(--grad-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* The dark band: the hero, and the print-view backdrop. Navy with the violet
+   pulled in from one corner, exactly as the identity sheet's banner is lit. */
+.band-deep {
+  background-color: var(--navy);
+  background-image: var(--grad-deep);
+  color: #fff;
+}
+/* Two soft brand lights over the band. On a flat navy a hero reads as a filled
+   rectangle; the identity's own banner is lit, and this is that lighting —
+   pure CSS, no image, so it costs nothing and never 404s. */
+.band-deep-lit {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+.band-deep-lit::before {
+  content: "";
+  position: absolute;
+  inset: -40% -10% auto auto;
+  width: 46rem;
+  height: 46rem;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    rgba(124, 58, 237, 0.5) 0%,
+    rgba(124, 58, 237, 0) 62%
+  );
+  z-index: -1;
+  pointer-events: none;
+}
+.band-deep-lit::after {
+  content: "";
+  position: absolute;
+  inset: auto auto -55% -14%;
+  width: 40rem;
+  height: 40rem;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    rgba(37, 99, 235, 0.55) 0%,
+    rgba(37, 99, 235, 0) 64%
+  );
+  z-index: -1;
+  pointer-events: none;
+}
+/* Motion is decoration here, so it is the first thing to go when the user has
+   asked for less of it. */
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .card-interactive {
+    transition: none;
+  }
+  .btn-primary:hover:not(:disabled),
+  .card-interactive:hover {
+    transform: none;
+  }
+}
+
+/* ── Builder form controls ── */
+.field-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-3);
+  margin-bottom: 4px;
+}
+.field-input,
+.field-textarea {
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-mid);
+  padding: 8px 12px;
+  font-size: 14px;
+  color: var(--text-1);
+  outline: none;
+  transition: border-color 200ms ease;
+}
+.field-input:focus,
+.field-textarea:focus {
+  border-color: color-mix(in srgb, var(--yellow) 60%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--yellow) 14%, transparent);
+}
+.field-textarea {
+  resize: vertical;
+  min-height: 5rem;
+}
+
+/* Brief highlight when a checklist item jumps the author to its field. */
+.check-flash {
+  animation: check-flash 1.4s ease-out;
+}
+@keyframes check-flash {
+  0%,
+  30% {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--yellow) 75%, transparent);
+    border-radius: 8px;
+  }
+  100% {
+    box-shadow: 0 0 0 2px transparent;
+    border-radius: 8px;
+  }
+}
+
+/* ── Print preview ── */
+@media print {
+  body {
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+
+  /* ── MINIMUM PRINT TYPE SIZE ──
+     Straight from the founder's newest packs, where every one of L6–L10 ends
+     its stylesheet with `font-size: max(10pt, 1em)` on the reading elements.
+
+     It matters more for us than for him, because we have a mechanism he does
+     not: the fit pass shrinks an over-full sheet with CSS `zoom` down to 0.85,
+     and 0.85 of an 11px label is 9.4px — about 7pt on paper. On screen that
+     still looks like text; photocopied for a class it is a grey smudge. This
+     floor is applied at PRINT only, so the screen layout is untouched and
+     nothing reflows in the preview.
+
+     `max()` not a flat size: it raises what is too small and leaves everything
+     already larger exactly as designed. */
+  .print-page p,
+  .print-page li,
+  .print-page td,
+  .print-page th,
+  .print-page label,
+  .pk-layer-body,
+  .pk-card,
+  .pk-prompt,
+  .pk-analogy,
+  .pk-judge,
+  .pk-coach,
+  .pk-echo,
+  .pk-crossfire {
+    font-size: max(10pt, 1em) !important;
+  }
+  /* Badges, chips and codes are LABELS, not reading text — they stay compact
+     at his 8pt floor, or a masthead badge would grow into the title. */
+  .pk-badge,
+  .pk-prompt-side,
+  .pk-chain-side,
+  .pk-card-id,
+  .pk-crossfire-tag,
+  .pk-layer-label,
+  .print-footer {
+    font-size: max(8pt, 1em) !important;
+  }
+
+  /* Hard offset shadows are a SCREEN device. On a laser printer a 4px black
+     offset under twenty cards is a page of toner and it prints as grey mush
+     against the 3px border that is already carrying the shape — so his newest
+     packs drop the shadow at print time and keep the border. */
+  .pk-card,
+  .pk-box,
+  .pk-prompt,
+  .pk-chain,
+  .pk-scene,
+  .pk-quiz,
+  .pk-flow,
+  .pk-ballot,
+  .pk-key {
+    box-shadow: none !important;
+  }
+  .print-page {
+    box-shadow: none !important;
+    margin: 0 !important;
+    width: 100% !important;
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+  /* the preview's grey backdrop and gaps must not print */
+  .print-stack {
+    background: white !important;
+    gap: 0 !important;
+    padding: 0 !important;
+  }
+  @page {
+    size: A4;
+    margin: 0;
+  }
+}
+
+/* page counter runs over whichever pages are actually rendered
+   (student/teacher modes render subsets, so numbering stays correct) */
+.print-stack {
+  counter-reset: print-page;
+}
+
+/* Every page is a FIXED A4 sheet — identical size, always. Content lives in the
+   inner .pk-fit column, which the fit pass scales down if it would overflow, so
+   the sheet frame never changes size and nothing ever spills. */
+.print-page {
+  width: 210mm;
+  height: 297mm;
+  overflow: hidden;
+  background: white;
+  color: #0f172a;
+  font-family: var(--pk-body), sans-serif;
+  display: flex;
+  flex-direction: column;
+  /* His measured page margins, in the metric units he designs in:
+     `.page-content { padding: 8mm 12mm 5mm }`. Ours was a uniform 0.45in
+     (11.4mm), which spent 22.8mm of every sheet on top-and-bottom white space
+     against his 13mm — nearly 10% of the usable column — and then paid for it
+     by shrinking the type. Wider side margins, tighter head and foot: a longer
+     page for the same line length. */
+  padding: 8mm 12mm 5mm;
+  box-sizing: border-box;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  page-break-after: always;
+  break-after: page;
+  position: relative;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+
+/* AI-designed pages own the whole sheet: no frame padding, so the model's
+   masthead can bleed to the A4 edges. The AI HTML sizes itself to 794×1123. */
+.print-page.pk-aidp {
+  padding: 0;
+}
+
+/* The scalable content column inside the fixed A4 frame. min-height:100% makes
+   short pages fill the sheet (so the margin-top:auto footer drops to the
+   bottom); tall pages grow past it and get zoom-scaled to fit by the fit pass. */
+.pk-fit {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 100%;
+  transform-origin: top left;
+}
+
+/* Blocks must never silently compress — content grows the column instead, then
+   the fit pass scales the whole column down to the sheet. */
+.print-page > *,
+.pk-fit > * {
+  flex-shrink: 0;
+}
+
+/* ── Design tokens — the pk-* utilities read CSS vars set per lesson design
+   (see lib/lesson-designs.ts). Defaults reproduce the original "Dossier" look,
+   so anything that doesn't set the vars renders exactly as before. ── */
+/* Every card carries a coloured RAIL down its left edge.
+   This is the one device both of the academy's own design systems share — the
+   elite pack sets `border-left: 4px solid var(--blue)` on its Pro cards, the
+   federal textbook sets `border-left: 10px solid var(--accent)` — and it is
+   doing real work, not decoration: the rail encodes side/role by POSITION and
+   WIDTH, so it survives a mono laser printer where two tints become one grey.
+   A pack's design system retunes it with --pk-rail-w / --pk-rail. */
+.pk-box {
+  border: var(--pk-box-border, 4px solid #000);
+  border-left: var(--pk-rail-w, 8px) solid var(--pk-rail, var(--pk-side, var(--pk-accent, #000)));
+  box-shadow: var(--pk-box-shadow, 4px 4px 0 #000);
+  border-radius: var(--pk-box-radius, 12px);
+}
+.pk-bar {
+  background: var(--pk-bar-bg, #000);
+  color: var(--pk-bar-fg, #fde047);
+}
+.pk-badge {
+  background: var(--pk-badge-bg, #000);
+  color: var(--pk-badge-fg, #fff);
+  border: var(--pk-badge-border, 0 solid transparent);
+  border-radius: var(--pk-badge-radius, 0);
+}
+.pk-headrule {
+  border-bottom: var(--pk-headrule, 3px solid #000);
+}
+/* Student pages carry the design's paper colour + texture, ink and frame. */
+.pk-page {
+  background-color: var(--pk-paper, #fff);
+  background-image: var(--pk-page-bg, none);
+  background-size: var(--pk-page-size, auto);
+  color: var(--pk-ink, #0f172a);
+  border: var(--pk-frame, 4px solid var(--kit-accent, #0f766e));
+}
+
+/* ── Page ROLE ──
+   Both of the academy's own systems colour the whole page by who it belongs to:
+   the elite pack runs a green header band on teacher pages against blue student
+   ones, and the federal textbook switches its accent per cohort
+   (--novice #2563eb / --jv #7c3aed / --teacher #f97316). The reason is
+   practical, not decorative — a coach holding thirty printed sheets has to find
+   their five without reading them.
+   Ours had no page identity at all: the teacher pages were hard-coded #dc2626
+   RED, which both collided with the semantic code (red = Con) and, being an
+   inline style, could not be restyled by the pack's own design system. */
+.pk-page--teacher {
+  --pk-accent: var(--pk-teacher, #047857);
+  --pk-accent-2: var(--pk-teacher, #047857);
+  --pk-rule: var(--pk-teacher, #047857);
+  --pk-rail: var(--pk-teacher, #047857);
+  --pk-frame: 4px solid var(--pk-teacher, #047857);
+}
+
+/* ── Footer with automatic page numbering ── */
+.print-footer {
+  margin-top: auto;
+  padding-top: 5px;
+  border-top: 3px solid var(--pk-rule, #000);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-family: var(--pk-display), sans-serif;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--pk-rule, #000);
+  flex-shrink: 0;
+}
+/* The page number is a designed object, not a caption. His federal textbook
+   prints it as a filled pill in the footer bar and numbers with a leading zero
+   (`counter(pagenum, decimal-leading-zero)` in the elite pack) — a two-digit
+   number reads as "part of a document", a bare "7" reads as a stray handout. */
+.print-footer::after {
+  counter-increment: print-page;
+  content: counter(print-page, decimal-leading-zero);
+  font-weight: 700;
+  white-space: nowrap;
+  /* The pill has to be a FILL dark enough to carry the paper colour as type.
+     Bound straight to --pk-rule it inherited whatever the page role set, and on
+     a teacher sheet whose design chose a pale sage the number printed
+     sage-on-cream — invisible. Clamp the lightness first. */
+  background: var(--pk-ink, #000);
+  background: oklch(from var(--pk-rule, #000) min(l, 0.38) c h);
+  color: var(--pk-paper, #fff);
+  border-radius: 999px;
+  padding: 2px 9px;
+  letter-spacing: 1px;
+}
+
+/* ── Student writing areas ──
+   These are real <textarea>s (see WriteArea in PrintView): a student fills them
+   in on screen, and they print exactly as they look, so the paper version loses
+   nothing by being fillable. The ruled lines are pitched at 26px and the line
+   height matched to them, so typed text sits ON the rules rather than drifting
+   between them the way it did when this was a decorated empty box. */
+.write-area {
+  border: 2px dashed #94a3b8;
+  border-radius: 8px;
+  background-color: #f8fafc;
+  background-image: repeating-linear-gradient(
+    transparent,
+    transparent 25px,
+    rgba(100, 116, 139, 0.35) 25px,
+    rgba(100, 116, 139, 0.35) 26px
+  );
+  padding: 6px 8px;
+  width: 100%;
+  display: block;
+  resize: none;
+  outline: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 26px;
+  color: #0f172a;
+}
+.write-area:focus { border-style: solid; border-color: var(--pk-accent, #0f766e); }
+.write-area-sm { min-height: 52px; }
+.write-area-md { min-height: 78px; }
+.write-area-lg { min-height: 104px; }
+
+/* The key, in a field that has one: the same highlighter wash the .answer-key
+   span uses, so the reveal reads identically whether it landed in a field or in
+   a caption. The novice house sheet restyles this as red marker ink. */
+.pk-root:not(.answers-hidden) .write-area[data-answer] {
+  color: #991b1b;
+  font-weight: 700;
+  background-color: #fef9c3;
+}
+
+/* inline fill-in-the-blank */
+.blank {
+  display: inline-block;
+  min-width: 64px;
+  border-bottom: 2px dashed #64748b;
+  text-align: center;
+  padding: 0 4px;
+}
+
+/* ── Answer key reveal ──
+   His packs light the revealed answer up rather than just recolouring it:
+   `body.answer-mode-active .inline-input { background:#fef9c3; color:#991b1b;
+   font-weight:700 }`. A highlighter wash is findable at arm's length while a
+   coach is walking the room; red text alone disappears into a dense page. */
+.answers-hidden .answer-key {
+  display: none !important;
+}
+.answer-key {
+  color: #991b1b;
+  font-weight: 700;
+  background: #fef9c3;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  padding: 0 3px;
+  border-radius: 3px;
+}
+/* Inside a write-area the wash would fight the ruled lines, so the key there
+   stays as marker ink on the paper it is written over. */
+.write-area .answer-key,
+.pk-answer-a .answer-key {
+  background: transparent;
+  padding: 0;
+}
+
+/* ── Overfull page marker (preview only — never printed) ── */
+.is-overfull::after {
+  content: "⚠️ OVERFLOWS THE SHEET";
+  position: absolute;
+  right: 0;
+  top: 297mm;
+  transform: translateY(-100%);
+  background: #f59e0b;
+  color: #1c1917;
+  font-family: var(--font-techmono), monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 2px 8px;
+  z-index: 5;
+}
+.is-overfull {
+  outline: 3px solid #f59e0b;
+  outline-offset: -3px;
+}
+/* the 11in mark, so authors can see exactly where the sheet ends */
+.is-overfull::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 297mm;
+  border-top: 2px dashed #f59e0b;
+  z-index: 5;
+}
+@media print {
+  .is-overfull::after,
+  .is-overfull::before {
+    display: none !important;
+  }
+  .is-overfull {
+    outline: none !important;
+  }
+}
+
+/* ── Print reliability: never split a pedagogical block across sheets ── */
+.avoid-break,
+.print-page table,
+.print-footer {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+/* B/W proof: what the classroom photocopier will actually produce. Applied to
+   the sheets only (not the controls) so the toolbar stays usable while the
+   pages show their true mono contrast. */
+@media screen {
+  /* screen-only: a colour printer should still get the real colours */
+  .pk-root.mono-proof .print-page {
+    filter: grayscale(1);
+  }
+}
+/* flagged by the B/W proof: text that won't survive the photocopier */
+.pk-root.mono-proof .mono-fail {
+  outline: 2px dashed #dc2626 !important;
+  outline-offset: 1px;
+}
+
+/* A flow sheet needs width, but mixing @page orientations in one print job is
+   how printers produce surprises — so the sheet stays portrait A4 and the flow
+   is rotated inside it. The student turns the paper sideways; the printer never
+   knows the difference. Dimensions are the portrait sheet's own, swapped. */
+.pk-landscape {
+  width: 297mm;
+  height: 210mm;
+  transform: rotate(-90deg) translateX(-297mm);
+  transform-origin: top left;
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 12mm;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
