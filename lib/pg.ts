@@ -49,7 +49,18 @@ export interface QueryResult {
 
 /** The narrow seam both drivers implement. */
 export interface Driver {
+  /** One statement, with parameters. Goes through the extended (prepared) protocol. */
   exec(sql: string, params: unknown[]): Promise<QueryResult>;
+  /**
+   * A multi-statement script with NO parameters — the schema, essentially.
+   *
+   * Separate from `exec` because Postgres refuses more than one command in a
+   * prepared statement ("cannot insert multiple commands into a prepared
+   * statement", 42601). The simple-query protocol allows it and takes no
+   * parameters, which is exactly the DDL case and exactly why it must not be
+   * reachable with user input.
+   */
+  script(sql: string): Promise<void>;
   /** Acquire a dedicated connection for BEGIN/COMMIT. */
   begin<T>(fn: (c: Driver) => Promise<T>): Promise<T>;
   close(): Promise<void>;
@@ -104,6 +115,11 @@ function pgDriver(pool: PgPool): Driver {
       const r = await pool.query(toPositional(sql), params);
       return { rows: r.rows as Record<string, unknown>[], rowCount: r.rowCount ?? 0 };
     },
+    async script(sql) {
+      // No params, so node-postgres uses the simple-query protocol, which is
+      // the one that accepts several statements at once.
+      await pool.query(sql);
+    },
     async begin(fn) {
       const client: PgClient = await pool.connect();
       const bound = clientDriver(client);
@@ -137,6 +153,9 @@ function clientDriver(client: PgClient): Driver {
     async exec(sql, params) {
       const r = await client.query(toPositional(sql), params);
       return { rows: r.rows as Record<string, unknown>[], rowCount: r.rowCount ?? 0 };
+    },
+    async script(sql) {
+      await client.query(sql);
     },
     // Postgres has savepoints, but nothing here nests transactions. Joining the
     // outer one is the honest behaviour: the alternative is a savepoint nobody
@@ -209,6 +228,9 @@ async function pgliteDriver(path: string): Promise<Driver> {
         rows: (r.rows ?? []) as Record<string, unknown>[],
         rowCount: r.affectedRows ?? (r.rows ?? []).length,
       };
+    },
+    async script(sql) {
+      await db.exec(sql);
     },
     async begin(fn) {
       /* PGlite is single-connection, so a transaction is just the statements —
@@ -305,9 +327,15 @@ export async function insert(
   return Number(row.id);
 }
 
-/** Statements with no parameters and no result — DDL, mostly. */
-export async function exec(sql: string): Promise<void> {
-  await (await active()).exec(sql, []);
+/**
+ * A multi-statement script with no parameters — the schema.
+ *
+ * Deliberately not reachable with user input: it uses the simple-query
+ * protocol, where a value cannot be a parameter and would have to be
+ * concatenated into the SQL. Everything else goes through all/one/run/insert.
+ */
+export async function script(sql: string): Promise<void> {
+  await (await active()).script(sql);
 }
 
 /**

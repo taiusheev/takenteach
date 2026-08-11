@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, describe, test } from "node:test";
-import { toPositional, all, one, insert, run, exec, transaction, closeDb } from "./pg";
+import { toPositional, all, one, insert, run, script, transaction, closeDb } from "./pg";
 
 /**
  * The Postgres layer's own tests.
@@ -59,7 +59,7 @@ describe("the driver, against PGlite", () => {
   });
 
   test("creates, inserts and reads back", async () => {
-    await exec(`CREATE TABLE widgets (
+    await script(`CREATE TABLE widgets (
       id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       name text NOT NULL,
       org_id bigint NOT NULL
