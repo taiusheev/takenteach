@@ -15,9 +15,11 @@
 import { ensureSchema } from "@/lib/schema";
 import { all, closeDb } from "@/lib/pg";
 
+/* Names the target, and only the host of it — a connection string carries a
+   password, and this line goes to a terminal that may be shared or recorded. */
 const target = process.env.DATABASE_URL
   ? new URL(process.env.DATABASE_URL).host
-  : "an in-memory PGlite database (no DATABASE_URL set)";
+  : `PGlite at ${process.env.PGLITE_PATH ?? "memory:// (nothing will persist)"}`;
 
 console.log(`Applying schema to ${target} …`);
 await ensureSchema();

@@ -395,6 +395,44 @@ Done as part of this step:
   pages the user was signed in to. Obeying the rule would let Back re-display
   authenticated pages after sign-out.
 
+### Two build failures worth recording
+
+Both were found by deploying, not by reasoning, and neither shows up locally as
+a hard failure.
+
+**1. `maxDuration` is a hard ceiling, not a request.**
+
+> Builder returned invalid maxDuration value for Serverless Function
+> "api/materials/[id]/generate-section". Serverless Functions must have a
+> maxDuration between 1 and 300 for plan hobby.
+
+Vercel refuses the entire deployment rather than clamping the value, so one
+over-large route takes every route down with it. `generate-section` was 600.
+
+This also settles a number §2 had to guess at: **the real Hobby ceiling is 300 s**,
+not the "tens of seconds" assumed there. That is comfortably more than the ~120 s
+an average stage takes, which is why the leg budget (45 s) is a good default —
+a leg stops after roughly one slow stage and still lands well inside 300 s.
+
+**2. `next build` uses Turbopack, and Turbopack breaks on `next/font/google`.**
+
+```
+[next]/internal/font/google/ibm_plex_sans_5dbfb357.module.css:7:8
+Module not found: Can't resolve '@vercel/turbopack-next/internal/font/google/font'
+```
+
+Turbopack generates a CSS module for each Google font and then cannot resolve
+the internal loader that CSS references. Locally this is **intermittent** —
+several builds in a row pass, then one fails with the same error — which is
+exactly the kind of fault that gets dismissed as a flake and then fails every
+time in CI. On Vercel it failed 100% of the time.
+
+`npm run build` is therefore `next build --webpack`. That is not a workaround
+invented here: `npm run dev` was already `next dev --webpack`, so the project
+had met this before. Two consecutive clean webpack builds locally, against zero
+successful Turbopack builds on Vercel. `npm run build:turbo` is kept so this can
+be re-tested when the bug is fixed.
+
 ### The order, and why
 
 **1. Supabase.** Create the project. Take the **transaction pooler** string
@@ -402,12 +440,18 @@ Done as part of this step:
 instances each opening their own connections, and the direct limit is reached
 almost immediately, surfacing as unrelated-looking 500s.
 
-**2. Schema and data, before any deploy.** From your machine, with
-`DATABASE_URL` set to that string in your shell (not committed anywhere):
+**2. Schema and data, before any deploy.** Put the pooler string in
+`.env.local` as `DATABASE_URL` — that file is gitignored and never leaves the
+machine — then:
 
 ```bash
 npm run db:migrate && npm run db:import
 ```
+
+Both scripts read `.env.local` (`--env-file-if-exists`), so the connection
+string lives in exactly one place and never has to be pasted into a shell, a
+terminal history, or a chat window. Unset `DATABASE_URL` there afterwards if
+you want local development back on PGlite.
 
 `db:import` refuses a non-empty target, verifies every table count by reading it
 back, and fast-forwards each identity sequence past the imported ids. Do this
