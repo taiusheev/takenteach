@@ -205,19 +205,43 @@ Done:
 - **`lib/pg.ts` + `lib/pg.test.ts`.** Placeholder conversion, ALS-carried transactions,
   `pg`/PGlite behind one interface. 11 tests including parameter ordering and rollback.
 
+- **`lib/schema.ts` + `lib/schema.test.ts` + `npm run db:migrate`.** The DDL, translated
+  and validated against PGlite. **This closed the phase 2 gap**: `org_id` is now a real
+  `NOT NULL REFERENCES`, which SQLite's `ALTER TABLE` could not express. 7 tests, and
+  they assert the *constraints* rather than that the SQL merely parses.
+
 Remaining, in order:
 
-1. **Schema DDL** → Postgres. `INTEGER PRIMARY KEY AUTOINCREMENT` → identity columns,
-   `datetime('now')` → `now()`, `json_extract` → `content::jsonb ->> 'series'`,
-   `COLLATE NOCASE` → `ILIKE`, and the `PRAGMA`-based migrations replaced. **This closes
-   the phase 2 gap**: `org_id` finally gets a real `NOT NULL REFERENCES`, which SQLite's
-   `ALTER TABLE` could not express.
-2. **Async-ify** `lib/db.ts` and `lib/auth/store.ts`, then let `tsc` enumerate the ~130
-   call sites — the same technique that found 113 in phase 2 and missed none.
-3. **Point `lib/tenancy.test.ts` at PGlite** and re-run the mutation check, so isolation
-   is proven on Postgres and not merely assumed to have survived.
-4. **Migrate the data**: 13 materials, 2 kits, 2 students, 2 rounds, 6 corrections, 2
-   accounts, 2 organizations. Verify by count and by tenancy.
+1. **Async-ify** `lib/db.ts` and `lib/auth/store.ts`, then let `tsc` enumerate the ~130
+   call sites — the technique that found 113 in phase 2 and missed none.
+
+   The mechanical recipe, so this is a well-specified job rather than a reading exercise:
+
+   | From | To |
+   |---|---|
+   | `getDb().prepare(S).all(a, b)` | `await all(S, [a, b])` |
+   | `.get(a)` | `await one(S, [a])` |
+   | `.run(a)` | `await run(S, [a])` |
+   | `.run(...).lastInsertRowid` | `await insert(S, [...])` (appends `RETURNING id`) |
+   | `db.transaction(() => {…})()` | `await transaction(async () => {…})` |
+   | `export function f(): T` | `export async function f(): Promise<T>` |
+   | `datetime('now')` in a query | `to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS')` — exported as `SQL_NOW` |
+   | `json_extract(content, '$.series')` | `content::jsonb ->> 'series'` |
+   | `LIKE ? COLLATE NOCASE` | `ILIKE ?` |
+
+   Then delete `createDb`, `migrateTenancy`, `migrateCorrectionsFk`, `assertNoOrphans`
+   and `createIndexes` — the schema file owns all of that now — and drop the
+   `better-sqlite3` dependency.
+
+2. **Point `lib/tenancy.test.ts` at PGlite** (it already targets a throwaway database via
+   `TAKENTEACH_DB`; it becomes `ensureSchema()` plus the existing assertions) and re-run
+   the mutation check, so isolation is proven on Postgres rather than assumed to have
+   survived the port.
+
+3. **Migrate the data**: 13 materials, 2 kits, 2 students, 2 rounds, 6 corrections, 2
+   accounts, 2 organizations. Ids must be preserved — `materials.forked_from`,
+   `rounds.ballot_id` and every child table reference them — so the import inserts with
+   explicit ids and then fixes each sequence with `setval`.
 
 ## 7b. One thing to do before deploying, unrelated to the port
 
