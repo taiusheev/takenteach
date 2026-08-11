@@ -10,7 +10,20 @@ import { loadEditableMaterial } from "@/lib/api/guards";
 import { badRequest, readBody, serverError } from "@/lib/api/request";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 600;
+/**
+ * 300, not 600, because 300 is the ceiling — and it is a HARD one.
+ *
+ * Vercel refuses the whole deployment over this rather than clamping it:
+ * "Serverless Functions must have a maxDuration between 1 and 300 for plan
+ * hobby". So an over-large value here is not an optimistic request for more
+ * time, it is a build failure for every route in the project.
+ *
+ * This rewrites one section of one pack — a single model call, comfortably
+ * inside 300s even for the teacher guide. The long-running case is a whole
+ * build, and that is the one that had to be restructured: see the note on legs
+ * in ../generate/route.ts.
+ */
+export const maxDuration = 300;
 
 const bodySchema = z.object({
   // An unrecognised section used to be passed straight through to the model,
