@@ -174,8 +174,9 @@ Each step leaves a working application.
 
 | Step | Work | Why this order |
 |---|---|---|
-| **1. Repo** | `git init`, `.env.example`, README deploy notes | Everything else deploys from it. Nothing is committed without you asking. |
-| **2. Postgres** | Port `lib/db.ts` + `lib/auth/store.ts` to a Postgres driver; async-ify; migrate the 13 materials; re-run `lib/tenancy.test.ts` against Postgres | The biggest mechanical change, and the tenancy test proves it landed intact. |
+| **1. Repo** ✅ | `git init`, `.gitattributes`, `.env.example`, real README | Everything else deploys from it. Local commits only — no remote configured, nothing pushed. |
+| **2a. Postgres layer** ✅ | `lib/pg.ts` + 11 tests | Proven before anything is ported onto it. |
+| **2b. Postgres port** | Port `lib/db.ts` + `lib/auth/store.ts`; async-ify; migrate the data; re-run `lib/tenancy.test.ts` against Postgres | The biggest mechanical change, and the tenancy test proves it landed intact. |
 | **3. Stage the build** | One request per generation stage; measure each against 60 s | The blocker that is *not* fixed by step 2. |
 | **4. De-globalise** | Budget mode to the database; park the overnight runner | Small, and step 3 makes it obvious what is left. |
 | **5. Email** | Implement Resend in `lib/mail.ts` (the seam is already there) | Password resets stop silently dropping. |
@@ -189,6 +190,45 @@ separable. Cloudflare proxying should be **DNS-only (grey cloud)** for the Verce
 double-proxying causes redirect loops and breaks Vercel's certificate issuance.
 
 ---
+
+## 7a. Where the port actually stands
+
+**The application still runs on SQLite and is fully working.** That is deliberate: the
+async conversion in the next step is all-or-nothing — half of it leaves the app broken —
+so it starts from a clean, committed, green checkpoint rather than in the middle of one.
+
+Done:
+
+- **Repo.** `git init`, `.gitattributes` (LF normalisation, or a Windows checkout commits
+  CRLF and every later diff is the whole file), `.env.example`, a real README. Two local
+  commits, no remote, nothing pushed. `data/*.db` and `.env*` are excluded.
+- **`lib/pg.ts` + `lib/pg.test.ts`.** Placeholder conversion, ALS-carried transactions,
+  `pg`/PGlite behind one interface. 11 tests including parameter ordering and rollback.
+
+Remaining, in order:
+
+1. **Schema DDL** → Postgres. `INTEGER PRIMARY KEY AUTOINCREMENT` → identity columns,
+   `datetime('now')` → `now()`, `json_extract` → `content::jsonb ->> 'series'`,
+   `COLLATE NOCASE` → `ILIKE`, and the `PRAGMA`-based migrations replaced. **This closes
+   the phase 2 gap**: `org_id` finally gets a real `NOT NULL REFERENCES`, which SQLite's
+   `ALTER TABLE` could not express.
+2. **Async-ify** `lib/db.ts` and `lib/auth/store.ts`, then let `tsc` enumerate the ~130
+   call sites — the same technique that found 113 in phase 2 and missed none.
+3. **Point `lib/tenancy.test.ts` at PGlite** and re-run the mutation check, so isolation
+   is proven on Postgres and not merely assumed to have survived.
+4. **Migrate the data**: 13 materials, 2 kits, 2 students, 2 rounds, 6 corrections, 2
+   accounts, 2 organizations. Verify by count and by tenancy.
+
+## 7b. One thing to do before deploying, unrelated to the port
+
+`npm audit` reports four high-severity advisories in the current Next (16.2.10), all
+fixed by a **non-major** bump to 16.3.0: a proxy/middleware bypass, SSRF via rewrites,
+postcss path traversal, and sharp/libvips.
+
+The proxy bypass is worth a sentence, because it is a good test of the design: `proxy.ts`
+here is an optimistic redirect and never the authorization boundary — the DAL is — so a
+bypass would not grant access to anything. It should still be patched. Kept separate from
+the port so the two changes stay reviewable independently.
 
 ## 8. What I need from you
 
