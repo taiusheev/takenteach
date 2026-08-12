@@ -395,7 +395,7 @@ Done as part of this step:
   pages the user was signed in to. Obeying the rule would let Back re-display
   authenticated pages after sign-out.
 
-### Two build failures worth recording
+### Three deploy failures worth recording
 
 Both were found by deploying, not by reasoning, and neither shows up locally as
 a hard failure.
@@ -432,6 +432,42 @@ invented here: `npm run dev` was already `next dev --webpack`, so the project
 had met this before. Two consecutive clean webpack builds locally, against zero
 successful Turbopack builds on Vercel. `npm run build:turbo` is kept so this can
 be re-tested when the bug is fixed.
+
+### 3. The direct connection is IPv6-only, and Vercel is IPv4-only
+
+The symptom is a 500 on anything that touches the database, with this in the
+runtime log — note that it is **not** an authentication error and **not**
+"relation does not exist":
+
+```
+Error: Connection terminated due to connection timeout
+```
+
+The cause, established by resolving the two hostnames rather than by guessing:
+
+| host | DNS |
+|---|---|
+| `db.<ref>.supabase.co` — direct | **IPv6 only**, no A record |
+| `aws-0-<region>.pooler.supabase.com` — pooler | **IPv4**, three A records |
+
+Vercel's functions have no IPv6 route, so the direct connection can never be
+reached from them. It fails by timing out rather than by refusing, which is why
+it looks like a hang or a firewall problem rather than a wrong address.
+
+This is the same "use the pooler" instruction §8 already gave, but the reason
+matters: it is not about connection limits at that stage, it is that the direct
+host is **unreachable from Vercel at all**. Use:
+
+```
+postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres
+```
+
+One more trap: the Supabase Connect dialog shows a banner on the transaction
+pooler tab reading *"Transaction pooler uses IPv6 by default — enable the
+dedicated IPv4 add-on to connect from IPv4-only networks."* For the shared
+pooler that is **not true** — the hostname resolves IPv4-only, as above. Taken
+at face value it pushes you toward a paid add-on you do not need, or toward the
+session pooler when transaction mode is the right one for serverless.
 
 ### The order, and why
 
