@@ -33,13 +33,27 @@
    forty files — but new code should prefer the `--color-surface*` /
    `--color-onbrand` aliases below, which say what they mean. */
 :root {
-  /* surfaces — page, panel, subtle fill. The page is the identity's own
-     off-white, so the product sits on the same paper as the brand sheet. */
-  --surface-1: #f8fafc;
+  /* ── SURFACES — page, panel, subtle fill ────────────────────────────────
+     The page used to be #F8FAFC against #FFFFFF panels: a 2% difference, which
+     is to say none. Every card, the sidebar and the page were one continuous
+     sheet of white, so nothing looked raised, grouping did no work, and the
+     product read as a document rather than a workspace. Adding shadows to fix
+     that is the wrong repair — it dirties a white page instead of separating
+     it.
+
+     So the PAGE steps down and the PANELS stay pure white. That is the
+     arrangement every dense tool converges on for the same reason: white is
+     then a signal ("this is a thing") rather than the default, and a card needs
+     no shadow at all to read as lifted.
+
+     Still the identity's off-white, only further along it — cool, blue-leaning,
+     never grey. A neutral grey page under a blue-violet brand is the specific
+     thing that makes an interface look unfinished rather than calm. */
+  --surface-1: #eef2f8;
   --surface-2: #ffffff;
-  --surface-3: #f1f5f9;
-  --line: #e2e8f0;
-  --line-strong: #cbd5e1;
+  --surface-3: #e3eaf4;
+  --line: #d8e0ec;
+  --line-strong: #b9c6d9;
 
   /* ink — headings, body, muted. Headings are the wordmark's own navy rather
      than a neutral near-black: it is the cheapest way for every page to carry
@@ -49,7 +63,12 @@
      screen and reads as a wireframe. */
   --text-1: #0a1f44;
   --text-2: #475569;
-  --text-3: #64748b;
+  /* Stepped down from #64748B when the page darkened. Muted type is measured
+     against the PAGE, not against white, and on the new surface the old value
+     landed at 4.24:1 — under AA. Deepening a background is never free: it
+     spends contrast from every colour that sits on it, and the muted ink is
+     always the first to fall through the floor. */
+  --text-3: #55637a;
 
   /* THE BRAND. The mark's blue, unmodified. It carries white type at 5.2:1, so
      it can be a button, a chip and a focus ring without needing a second
@@ -138,9 +157,17 @@
   --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
 
   /* Focus. ONE ring, defined once. A focus style that differs per component is
-     the most common way a keyboard user loses their place. */
-  --ring: 0 0 0 2px var(--surface-2), 0 0 0 4px var(--brand);
-  --ring-danger: 0 0 0 2px var(--surface-2), 0 0 0 4px var(--danger);
+     the most common way a keyboard user loses their place.
+
+     Drawn with `outline` + `outline-offset` rather than a two-stop box-shadow.
+     The shadow version has to name the colour of the gap, which means baking in
+     an assumption about what the focused control is sitting on — and the moment
+     the page stopped being white, every ring on the page background wore a
+     white halo. An outline offset is transparent: it shows whatever is actually
+     behind, on any surface, in either theme. It also follows border-radius and
+     is not clipped by `overflow: hidden`, which box-shadow rings routinely are. */
+  --ring-w: 2px;
+  --ring-offset: 2px;
 
   /* Stacking. Named so a new overlay does not get `z-[9999]` and win against
      something it should sit under. */
@@ -214,8 +241,6 @@
     --elev: 0 1px 2px rgba(0, 0, 0, 0.4);
     --elev-lg: 0 8px 24px -6px rgba(0, 0, 0, 0.55);
     --elev-brand: 0 8px 20px -6px rgba(96, 165, 250, 0.35);
-    --ring: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--brand);
-    --ring-danger: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--danger);
   }
 }
 
@@ -248,8 +273,6 @@
   --elev: 0 1px 2px rgba(0, 0, 0, 0.4);
   --elev-lg: 0 8px 24px -6px rgba(0, 0, 0, 0.55);
   --elev-brand: 0 8px 20px -6px rgba(96, 165, 250, 0.35);
-  --ring: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--brand);
-  --ring-danger: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--danger);
 }
 
 /* PRINT IS ALWAYS LIGHT. A pack is printed on paper; a dark theme reaching the
@@ -317,9 +340,8 @@
    ring behind it — the reason so many products end up removing focus styles
    altogether and locking keyboard users out. */
 :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
-  outline: none;
-  box-shadow: var(--ring);
-  border-radius: var(--r-sm);
+  outline: var(--ring-w) solid var(--brand);
+  outline-offset: var(--ring-offset);
 }
 
 /* ── MOTION, AND PERMISSION TO SKIP IT ─────────────────────────────────────
@@ -337,182 +359,208 @@
   }
 }
 
-/* ── SKELETONS ─────────────────────────────────────────────────────────────
-   Shown while a page's data is in flight, instead of a blank screen or a
-   spinner. The shape matters more than the shimmer: a skeleton that matches
-   the layout it replaces means nothing moves when the content lands, which is
-   the difference between "fast" and "janky" regardless of actual speed. */
-.skeleton {
-  position: relative;
-  overflow: hidden;
-  background: var(--surface-3);
-  border-radius: var(--r-sm);
-}
-.skeleton::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  transform: translateX(-100%);
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--surface-2) 70%, transparent),
-    transparent
-  );
-  animation: skeleton-sweep 1.4s ease-in-out infinite;
-}
-@keyframes skeleton-sweep {
-  100% {
-    transform: translateX(100%);
-  }
-}
-/* A skeleton is decoration standing in for content. Screen readers should hear
-   the loading state announced once, not read a row of empty boxes. */
-.skeleton-group {
-  cursor: progress;
-}
+/* ══════════════════════════════════════════════════════════════════════════
+   THE SHELL PRIMITIVES — INSIDE @layer components, WHICH IS LOAD-BEARING
+   ══════════════════════════════════════════════════════════════════════════
+   Everything below sits in Tailwind's `components` layer, and it has to.
 
-/* ── TOASTS ────────────────────────────────────────────────────────────────
-   Bottom-right, above everything, and never more than a few at once. The
-   spring easing is used here and nowhere else: a toast is the one thing in the
-   product that has to catch the eye of someone already looking elsewhere. */
-.toast-viewport {
-  position: fixed;
-  bottom: 1rem;
-  right: 1rem;
-  z-index: var(--z-toast);
-  display: flex;
-  flex-direction: column-reverse;
-  gap: 0.5rem;
-  width: min(22rem, calc(100vw - 2rem));
-  pointer-events: none;
-}
-.toast {
-  pointer-events: auto;
-  display: flex;
-  align-items: flex-start;
-  gap: 0.625rem;
-  padding: 0.75rem 0.875rem;
-  border-radius: var(--r-lg);
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  box-shadow: var(--elev-lg);
-  animation: toast-in var(--t-slow) var(--ease-spring);
-}
-.toast[data-leaving="true"] {
-  animation: toast-out var(--t-base) var(--ease-out) forwards;
-}
-@keyframes toast-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.98);
-  }
-}
-@keyframes toast-out {
-  to {
-    opacity: 0;
-    transform: translateY(4px) scale(0.98);
-  }
-}
-.toast-ok {
-  border-left: 3px solid var(--ok);
-}
-.toast-error {
-  border-left: 3px solid var(--danger);
-}
-.toast-info {
-  border-left: 3px solid var(--brand);
-}
+   Unlayered CSS beats ANY layered rule regardless of specificity — that is how
+   the cascade orders layers, not a quirk. So a bare `.nav-item { display: flex }`
+   silently defeated `lg:hidden` and `lg:flex`, and the sidebar rendered both
+   its desktop "Collapse" control and its mobile "Close menu" control at every
+   width, on top of each other. Nothing in the markup was wrong; the utility
+   simply never applied.
 
-/* ── KEYBOARD HINTS ────────────────────────────────────────────────────────
-   A shortcut nobody can discover is a shortcut nobody uses, so the keys are
-   drawn wherever the action is. */
-kbd,
-.kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 1.35rem;
-  padding: 0.05rem 0.3rem;
-  border: 1px solid var(--line-strong);
-  border-bottom-width: 2px;
-  border-radius: var(--r-xs);
-  background: var(--surface-3);
-  color: var(--text-3);
-  font-family: var(--font-lexend), sans-serif;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.5;
-}
+   The rule this establishes: a component class that a utility might need to
+   override belongs in a layer. Display, spacing and colour are all things
+   Tailwind is routinely asked to override at a breakpoint, so all of them do.
 
-/* ── THE WORKSPACE SHELL ───────────────────────────────────────────────────
-   Sidebar + header + content, sized from the shared measurements above so the
-   content offset can never drift from the rail's actual width. */
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  padding: 0.4rem 0.6rem;
-  border-radius: var(--r-md);
-  color: var(--text-2);
-  font-size: 13.5px;
-  font-weight: 550;
-  transition: background-color var(--t-fast) var(--ease-out),
-    color var(--t-fast) var(--ease-out);
-}
-.nav-item:hover {
-  background: var(--surface-3);
-  color: var(--text-1);
-}
-.nav-item[aria-current="page"] {
-  background: var(--brand-soft);
-  color: var(--brand-ink);
-  font-weight: 650;
-}
-.nav-item[aria-current="page"] .nav-icon {
-  color: var(--brand);
-}
-.nav-icon {
-  flex-shrink: 0;
-  color: var(--text-3);
-  transition: color var(--t-fast) var(--ease-out);
-}
-/* Show one icon in light, the other in dark, without asking JavaScript which
-   theme resolved — on `system` that would mean a media-query listener for a
-   purely visual swap. */
-.dark-show {
-  display: none;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .dark-show {
-    display: inline;
+   (The older primitives further up this file — .btn, .card, .chip, .field-* —
+   are still unlayered. They have not hit this because nothing combines them
+   with a responsive display utility, but they are one `sm:hidden` away from the
+   same bug. Worth moving; not moved here, because that is a change to forty
+   components' worth of cascade and does not belong in the same commit as a
+   sidebar fix.) */
+
+@layer components {
+  /* ── SKELETONS ─────────────────────────────────────────────────────────────
+     Shown while a page's data is in flight, instead of a blank screen or a
+     spinner. The shape matters more than the shimmer: a skeleton that matches
+     the layout it replaces means nothing moves when the content lands, which is
+     the difference between "fast" and "janky" regardless of actual speed. */
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background: var(--surface-3);
+    border-radius: var(--r-sm);
   }
-  :root:not([data-theme="light"]) .dark-hide {
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--surface-2) 70%, transparent),
+      transparent
+    );
+    animation: skeleton-sweep 1.4s ease-in-out infinite;
+  }
+  @keyframes skeleton-sweep {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+  /* A skeleton is decoration standing in for content. Screen readers should hear
+     the loading state announced once, not read a row of empty boxes. */
+  .skeleton-group {
+    cursor: progress;
+  }
+
+  /* ── TOASTS ────────────────────────────────────────────────────────────────
+     Bottom-right, above everything, and never more than a few at once. The
+     spring easing is used here and nowhere else: a toast is the one thing in the
+     product that has to catch the eye of someone already looking elsewhere. */
+  .toast-viewport {
+    position: fixed;
+    bottom: 1rem;
+    right: 1rem;
+    z-index: var(--z-toast);
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 0.5rem;
+    width: min(22rem, calc(100vw - 2rem));
+    pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    padding: 0.75rem 0.875rem;
+    border-radius: var(--r-lg);
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    box-shadow: var(--elev-lg);
+    animation: toast-in var(--t-slow) var(--ease-spring);
+  }
+  .toast[data-leaving="true"] {
+    animation: toast-out var(--t-base) var(--ease-out) forwards;
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+    }
+  }
+  @keyframes toast-out {
+    to {
+      opacity: 0;
+      transform: translateY(4px) scale(0.98);
+    }
+  }
+  .toast-ok {
+    border-left: 3px solid var(--ok);
+  }
+  .toast-error {
+    border-left: 3px solid var(--danger);
+  }
+  .toast-info {
+    border-left: 3px solid var(--brand);
+  }
+
+  /* ── KEYBOARD HINTS ────────────────────────────────────────────────────────
+     A shortcut nobody can discover is a shortcut nobody uses, so the keys are
+     drawn wherever the action is. */
+  kbd,
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.35rem;
+    padding: 0.05rem 0.3rem;
+    border: 1px solid var(--line-strong);
+    border-bottom-width: 2px;
+    border-radius: var(--r-xs);
+    background: var(--surface-3);
+    color: var(--text-3);
+    font-family: var(--font-lexend), sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.5;
+  }
+
+  /* ── THE WORKSPACE SHELL ───────────────────────────────────────────────────
+     Sidebar + header + content, sized from the shared measurements above so the
+     content offset can never drift from the rail's actual width. */
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: var(--r-md);
+    color: var(--text-2);
+    font-size: 13.5px;
+    font-weight: 550;
+    transition: background-color var(--t-fast) var(--ease-out),
+      color var(--t-fast) var(--ease-out);
+  }
+  .nav-item:hover {
+    background: var(--surface-3);
+    color: var(--text-1);
+  }
+  .nav-item[aria-current="page"] {
+    background: var(--brand-soft);
+    color: var(--brand-ink);
+    font-weight: 650;
+  }
+  .nav-item[aria-current="page"] .nav-icon {
+    color: var(--brand);
+  }
+  .nav-icon {
+    flex-shrink: 0;
+    color: var(--text-3);
+    transition: color var(--t-fast) var(--ease-out);
+  }
+  /* Show one icon in light, the other in dark, without asking JavaScript which
+     theme resolved — on `system` that would mean a media-query listener for a
+     purely visual swap. */
+  .dark-show {
     display: none;
   }
-}
-:root[data-theme="dark"] .dark-show {
-  display: inline;
-}
-:root[data-theme="dark"] .dark-hide {
-  display: none;
-}
-:root[data-theme="light"] .dark-show {
-  display: none;
-}
-:root[data-theme="light"] .dark-hide {
-  display: inline;
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .dark-show {
+      display: inline;
+    }
+    :root:not([data-theme="light"]) .dark-hide {
+      display: none;
+    }
+  }
+  :root[data-theme="dark"] .dark-show {
+    display: inline;
+  }
+  :root[data-theme="dark"] .dark-hide {
+    display: none;
+  }
+  :root[data-theme="light"] .dark-show {
+    display: none;
+  }
+  :root[data-theme="light"] .dark-hide {
+    display: inline;
+  }
+
+  .nav-section {
+    padding: 0 0.6rem;
+    margin-bottom: 0.25rem;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
 }
 
-.nav-section {
-  padding: 0 0.6rem;
-  margin-bottom: 0.25rem;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-3);
-}
 
 body {
   background: var(--surface-1);

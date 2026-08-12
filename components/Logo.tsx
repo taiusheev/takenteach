@@ -95,6 +95,15 @@ export function LogoMark({
  * a wordmark — and "Teach" steps up to --brand-lift, because the brand blue
  * itself only manages 3.1:1 on the navy and a wordmark that has to be squinted
  * at is a broken wordmark.
+ *
+ * ── AND `tone="light"` FOLLOWS THE THEME ─────────────────────────────────
+ * "Taken" is drawn in `--text-1`, not in `--navy`. Those were the same colour
+ * until the product gained a dark theme, at which point the hardcoded navy
+ * became #0A1F44 type on a #0B1220 page — a wordmark that had vanished
+ * entirely, leaving the header reading "Teach". `--text-1` is navy on a light
+ * surface and near-white on a dark one, which is what the note at the top of
+ * this file claims the component does. "Teach" needed no change: `--brand`
+ * already steps to the lighter blue in dark, for exactly this reason.
  */
 export default function Logo({
   size = 32,
@@ -116,7 +125,7 @@ export default function Logo({
           className="font-display leading-none"
           style={{ fontSize: size * 0.6, letterSpacing: "-0.025em" }}
         >
-          <span style={{ color: dark ? "#FFFFFF" : "var(--navy)" }}>Taken</span>
+          <span style={{ color: dark ? "#FFFFFF" : "var(--text-1)" }}>Taken</span>
           <span style={{ color: dark ? "var(--brand-lift)" : "var(--brand)" }}>
             Teach
           </span>
