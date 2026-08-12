@@ -550,6 +550,22 @@
     display: inline;
   }
 
+  /* The one thing on screen during a twenty-minute build that says "still
+     working". Opacity only — a scaling or spinning marker at this size reads as
+     a loading spinner, which is the thing the progress rail exists to replace. */
+  .build-pulse {
+    animation: build-pulse 1.6s var(--ease-out) infinite;
+  }
+  @keyframes build-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
   .nav-section {
     padding: 0 0.6rem;
     margin-bottom: 0.25rem;

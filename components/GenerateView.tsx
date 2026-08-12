@@ -7,6 +7,7 @@ import { packReadiness } from "@/lib/readiness";
 import type { RepairSummary, QaSummary } from "@/lib/ai";
 import { Subject, SUBJECT_DEFS } from "@/lib/subjects";
 import { contentTypeDef } from "@/lib/content-types";
+import BuildProgress, { type StageState } from "@/components/build/BuildProgress";
 
 // Mirrors STAGE_LABELS in lib/ai.ts. Deliberately duplicated rather than
 // imported: ai.ts pulls in the Anthropic SDK, and this is a client component.
@@ -25,8 +26,6 @@ const STAGES: { id: string; label: string }[] = [
   // where it is collected, not where the work happens.
   { id: "design", label: "Visual identity — one design system for every page" },
 ];
-
-type StageState = "pending" | "running" | "done";
 
 /**
  * Real-time AI build: stages light up as the model works, and each section's
@@ -372,45 +371,6 @@ export default function GenerateView({
         </div>
       )}
 
-      {/* progress bar — how far through the build we are */}
-      {phase !== "idle" && (
-        <div className="mb-6">
-          <div className="mb-1 flex justify-between text-[11px] font-bold uppercase tracking-widest text-fg3">
-            <span>
-              {phase === "running" ? (
-                <>
-                  Building…{" "}
-                  <span className="font-normal normal-case tracking-normal text-fg3">
-                    keep this tab open — every finished stage is saved, so you
-                    can Resume if it stops.
-                  </span>
-                </>
-              ) : phase === "done" ? (
-                "Complete"
-              ) : phase === "stopped" ? (
-                "Stopped"
-              ) : (
-                "Error"
-              )}
-            </span>
-            <span>
-              {stageList.filter((s) => stages[s.id] === "done").length}/
-              {stageList.length} stages
-            </span>
-          </div>
-          <div className="h-2 overflow-hidden rounded-full bg-inkmid">
-            <div
-              className={`h-full transition-all duration-500 ${
-                phase === "error" ? "bg-danger" : phase === "done" ? "bg-ok" : "bg-accent"
-              }`}
-              style={{
-                width: `${(stageList.filter((s) => stages[s.id] === "done").length / stageList.length) * 100}%`,
-              }}
-            />
-          </div>
-        </div>
-      )}
-
       {phase === "error" && (
         <div className="mb-6 rounded-xl border border-danger/40 bg-danger/10 p-4 text-sm text-danger">
           {error}
@@ -444,30 +404,16 @@ export default function GenerateView({
       )}
 
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
-        {/* stage rail */}
-        <ol className="flex flex-col gap-2 lg:sticky lg:top-6 lg:self-start">
-          {stageList.map((s) => {
-            const st: StageState = stages[s.id] ?? "pending";
-            return (
-              <li key={s.id} className={`flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-xs transition-colors ${
-                st === "running"
-                  ? "border-accent/60 bg-inkcard"
-                  : st === "done"
-                    ? "border-ok/40 bg-inkcard"
-                    : "border-inkline bg-inkmid"
-              }`}>
-                <span className="mt-0.5">
-                  {st === "done" ? "✅" : st === "running" ? (
-                    <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-inkline border-t-accent" />
-                  ) : "○"}
-                </span>
-                <span className={st === "pending" ? "text-fg3" : "font-semibold text-fg1"}>
-                  {s.label}
-                </span>
-              </li>
-            );
-          })}
-        </ol>
+        {/* The stage rail. Named steps with three states rather than a
+            spinner — see components/build/BuildProgress.tsx for why that
+            matters over a twenty-minute build. */}
+        <div className="card p-4 lg:sticky lg:top-[calc(var(--header-h)+1rem)] lg:self-start">
+          <BuildProgress
+            stages={stageList}
+            state={stages}
+            phase={phase}
+          />
+        </div>
 
         {/* live content */}
         <div className="flex min-w-0 flex-col gap-4">

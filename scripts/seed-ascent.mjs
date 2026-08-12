@@ -35,7 +35,13 @@ import {
 } from "@/lib/auth/store";
 
 const FOUNDER_EMAIL = "t.aiusheev@gmail.com";
-const FOUNDER_NAME = "Ascent Academy Founder";
+/* A PERSON'S NAME, not a job title and not the school's.
+   This said "Ascent Academy Founder", which is a description of a role and
+   read straight through to the product: the dashboard greets you by the first
+   word of this field, so every morning it said "Good morning, Ascent" — the
+   organisation, addressing its owner by its own name. `users.name` is who
+   somebody is; `organizations.name` is already the other thing. */
+const FOUNDER_NAME = "Timur Aiusheev";
 const ORG_NAME = "Ascent Academy";
 const ORG_SLUG = "ascent-academy";
 
