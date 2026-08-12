@@ -15,6 +15,8 @@ import {
 import { LessonPack } from "@/lib/lesson-pack-schema";
 import { unitKey } from "@/lib/unit-plan";
 import StatusChip from "@/components/StatusChip";
+import Greeting from "@/components/dash/Greeting";
+import StatCards from "@/components/dash/StatCards";
 import NewMaterialButton from "@/components/NewMaterialButton";
 import LibraryControls from "@/components/LibraryControls";
 import { LogoMark } from "@/components/Logo";
@@ -31,7 +33,8 @@ export default async function LibraryPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  const { legacyRole: role, scope } = await requireActiveSession();
+  const session = await requireActiveSession();
+  const { legacyRole: role, scope } = session;
   const sp = await searchParams;
   const all = await listMaterials(scope);
   const summary = librarySummary(all);
@@ -83,82 +86,79 @@ export default async function LibraryPage({
   const built = all.filter((m) => !isUnbuilt(m.type, m.content)).length;
   const inReview = all.filter((m) => m.status === "in_review").length;
 
+  /* Counted, not modelled. `updated_at` is the schema's own text timestamp in
+     "YYYY-MM-DD HH:MM:SS", so "this month" is a string prefix — no date parsing,
+     and no timezone to get wrong for a figure nobody reads to the hour. */
+  const monthPrefix = new Date().toISOString().slice(0, 7);
+  const thisMonth = all.filter((m) =>
+    (m.updated_at ?? "").startsWith(monthPrefix)
+  ).length;
+
   return (
-    <div>
-      {/* ── THE FRONT PAGE ──
-          This used to open on a bare list with a "Library" heading. A list is
-          what you show someone who already knows what the product is; the first
-          screen has to say what this thing does and give the two actions that
-          matter, or it reads as somebody's internal script.
+    <div className="mx-auto max-w-6xl">
+      {/* ── THE DASHBOARD HEAD ──
+          This replaced a 459px navy band carrying the proposition, the identity
+          at full size, and the two build actions.
 
-          It then said the proposition in plain type on the page background, and
-          the note here read "deliberately not a marketing hero: this is a
-          workspace". That instinct was right and the conclusion was wrong. What
-          a workspace can't afford is a hero that WASTES the fold — a stock
-          photograph, a testimonial, a second "learn more". It can perfectly well
-          afford a branded one, if the band carries the two build actions and the
-          live state of the library, which is what a coach opening this at 8am
-          actually came for. So the band earns its height four ways: it is the
-          only place the identity is stated at full size, and it holds the
-          proposition, the actions, and the numbers.
+          That band was right for a page a stranger might land on and wrong for
+          the one a teacher opens every morning. It restated what the product
+          does — to the person who already bought it, who already signed in, and
+          who came here to do a specific job — and it cost the entire fold to do
+          it. The brief's own test settles it: does this help a teacher build a
+          better lesson faster? A proposition read for the ninetieth time does
+          not, and the brand is now stated by the rail, the mark and the accent
+          on every screen rather than by one large panel on this one.
 
-          Its height is a budget, not a leftover: 459px measured, which puts the
-          "Your classes" rule at 563 and the bottom of the first card at 714 —
-          inside a 720px viewport, the short end of a laptop. A hero that pushes
-          the work below the fold has stopped being a header and become a splash
-          screen, so if anything is added here, something comes out. */}
-      <section className="band-deep band-deep-lit no-print">
-        <div className="mx-auto max-w-5xl px-6 py-10 sm:py-12">
-          <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/[0.07] px-3 py-1 text-xs font-semibold text-white/80">
-            <span className="h-1.5 w-1.5 rounded-full bg-[var(--brand-lift)]" />
-            Debate · Critical Thinking · Academic Writing
+          What replaces it is the same information ranked by usefulness: who you
+          are and what to do (the greeting and the two actions), then the state
+          of the library as four figures you can click. Same content, a third of
+          the height, and the work starts above the fold. */}
+      <div className="mb-8 flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+        <div>
+          <Greeting name={session.name} />
+          <p className="mt-1.5 text-[14px] text-fg2">
+            {all.length === 0
+              ? "Build your first lesson — it takes one sentence to start."
+              : "Build your next debate lesson in minutes."}
           </p>
-          <h1 className="max-w-2xl text-[34px] font-bold leading-[1.08] tracking-[-0.03em] text-white sm:text-[42px]">
-            Build a lesson your whole{" "}
-            {/* The lifted blue, not the brand blue: #2563EB on this navy is
-                3.1:1, and a highlight nobody can read is not a highlight. */}
-            <span className="text-[var(--brand-lift)]">faculty</span> could have
-            written.
-          </h1>
-          <p className="mt-3.5 max-w-xl text-[15px] leading-relaxed text-white/75">
-            One house style across every pack. Evidence rules, scope limits and
-            reading level checked before anything reaches a classroom.
-          </p>
-
-          <div className="mt-6 flex flex-wrap items-center gap-3">
-            <NewMaterialButton disabled={!canCreate(role)} tone="dark" />
-            {canCreate(role) && (
-              <Link
-                href="/materials/new?mode=unit"
-                className="btn btn-outline-light"
-              >
-                Build a full class
-              </Link>
-            )}
-          </div>
-
-          {/* The library's live state, as three numbers rather than a sentence.
-              A run-on line of "12 built · 19 total · 3 awaiting review" is read
-              at the speed of prose; three labelled figures are read at a glance,
-              and the one that is a QUEUE gets to be a link, because a number
-              you can act on should be reachable from where you read it. */}
-          <dl className="mt-7 flex flex-wrap items-end gap-x-10 gap-y-4 border-t border-white/15 pt-5">
-            <Stat label="Built" value={built} />
-            <Stat label="In the library" value={summary.total} />
-            {units.length > 0 && <Stat label="Classes running" value={units.length} />}
-            {inReview > 0 && (
-              <Stat
-                label="Awaiting review"
-                value={inReview}
-                href="/review"
-                accent
-              />
-            )}
-          </dl>
         </div>
-      </section>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <NewMaterialButton disabled={!canCreate(role)} />
+          {canCreate(role) && (
+            <Link href="/materials/new?mode=unit" className="btn btn-secondary">
+              Build a full class
+            </Link>
+          )}
+        </div>
+      </div>
 
-      <div className="mx-auto max-w-5xl px-6 py-10">
+      <div className="mb-9">
+        <StatCards
+          stats={[
+            {
+              label: "In the library",
+              value: summary.total,
+              icon: "library",
+              note: built < summary.total ? `${built} built` : "all built",
+            },
+            { label: "This month", value: thisMonth, icon: "built" },
+            {
+              label: "Classes running",
+              value: units.length,
+              icon: "classes",
+            },
+            {
+              label: "Awaiting review",
+              value: inReview,
+              icon: "review",
+              href: inReview > 0 ? "/review" : undefined,
+              tone: "accent",
+            },
+          ]}
+        />
+      </div>
+
+      <div className="mx-auto max-w-6xl">
 
       {units.length > 0 && (
         <div className="mb-10">
@@ -377,57 +377,6 @@ function SectionHead({ title, note }: { title: string; note: string }) {
         {title}
       </h2>
       <span className="shrink-0 text-xs text-fg3">{note}</span>
-    </div>
-  );
-}
-
-/** One figure on the hero band. `href` turns it into a queue you can open.
- *
- *  The term is written BEFORE the definition and flipped with `order`, which
- *  looks like a fussy detail and is not: a <dl> requires dt to precede dd, and
- *  a screen reader reads the pair in DOM order — "Awaiting review, 3" — while
- *  the eye wants the figure on top. Ordering in CSS is the only way to get
- *  both. */
-function Stat({
-  label,
-  value,
-  href,
-  accent = false,
-}: {
-  label: string;
-  value: number;
-  href?: string;
-  accent?: boolean;
-}) {
-  const figure = (
-    <span
-      className={`font-display text-[30px] leading-none ${
-        accent ? "text-[var(--brand-lift)]" : "text-white"
-      }`}
-    >
-      {value}
-    </span>
-  );
-  return (
-    <div className="flex flex-col">
-      <dt className="order-2 mt-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/55">
-        {label}
-      </dt>
-      <dd className="order-1">
-        {href ? (
-          <Link
-            href={href}
-            className="inline-flex items-baseline gap-1.5 transition-opacity hover:opacity-80"
-          >
-            {figure}
-            <span aria-hidden className="text-sm text-[var(--brand-lift)]">
-              →
-            </span>
-          </Link>
-        ) : (
-          figure
-        )}
-      </dd>
     </div>
   );
 }
