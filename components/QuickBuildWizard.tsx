@@ -223,17 +223,14 @@ export default function QuickBuildWizard({
   const ready = skillFocus.trim() && resolution.trim();
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-12">
-      <div className="mb-8 text-center">
-        <h1 className="font-display text-5xl text-fg1">Make a lesson</h1>
-        <p className="mt-2 text-sm text-fg2">
-          Write the brief — a sentence or everything you want covered. AI plans
-          the setup, and your whole brief guides the build.
-        </p>
-      </div>
+    <div>
 
       {/* the brief — the teacher's own prompt for the whole build */}
-      <div className="mb-6 rounded-2xl border border-inkline bg-inkcard p-2 shadow-lg focus-within:border-accent/60 transition-colors">
+      {/* THE BRIEF is the one thing on this screen that matters, so it is the
+          one thing that reacts: the border takes the brand when the caret is
+          in it. Everything else on the page is quiet by comparison, which is
+          how a focal point is made — not by making it bigger. */}
+      <div className="card mb-6 p-2 transition-colors focus-within:border-brand/60">
         <span className="block px-3 pt-2 text-[11px] font-bold uppercase tracking-widest text-fg3">
           Lesson brief
         </span>
@@ -275,7 +272,7 @@ export default function QuickBuildWizard({
                   ? "Building…"
                   : planned
                     ? "↻ Re-plan"
-                    : "⚡ Build my lesson →"}
+                    : "Build my lesson →"}
             </button>
           </div>
         </div>
@@ -546,7 +543,7 @@ export default function QuickBuildWizard({
               disabled={researching}
               className="rounded-lg border border-accent/50 px-3 py-1.5 text-xs font-bold text-accent hover:bg-accent/10 disabled:opacity-40 transition-colors"
             >
-              {researching ? "Researching…" : "🔎 Suggest sources"}
+              {researching ? "Researching…" : "Suggest sources"}
             </button>
           </div>
           <p className="mb-2 text-[11px] text-fg3">
@@ -632,14 +629,14 @@ export default function QuickBuildWizard({
               disabled={busy || !ready}
               className="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {busy ? "Creating…" : "⚡ Build it with AI →"}
+              {busy ? "Creating…" : "Build it with AI →"}
             </button>
             <button
               onClick={() => { setMode("full"); create(); }}
               disabled={busy || !ready}
               className="rounded-lg border border-inkline px-4 py-3 text-sm font-bold text-fg2 hover:text-fg1 disabled:opacity-40 transition-colors"
             >
-              🛠 Start blank instead
+              Start blank instead
             </button>
           </div>
           {!ready && (

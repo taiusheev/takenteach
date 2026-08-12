@@ -8,6 +8,13 @@ import type { RepairSummary, QaSummary } from "@/lib/ai";
 import { Subject, SUBJECT_DEFS } from "@/lib/subjects";
 import { contentTypeDef } from "@/lib/content-types";
 import BuildProgress, { type StageState } from "@/components/build/BuildProgress";
+import {
+  IconPencil,
+  IconPlay,
+  IconPrinter,
+  IconRefresh,
+  IconSpark,
+} from "@/components/shell/icons";
 
 // Mirrors STAGE_LABELS in lib/ai.ts. Deliberately duplicated rather than
 // imported: ai.ts pulls in the Anthropic SDK, and this is a client component.
@@ -283,42 +290,48 @@ export default function GenerateView({
           ← Material
         </Link>
         <div className="min-w-0 flex-1">
-          <h1 className="font-display truncate text-3xl text-fg1">⚡ Quick Build — {title}</h1>
+          <h1 className="font-display truncate text-[26px] text-fg1">{title}</h1>
           <p className="text-xs text-fg3">
             {def.label} · {pack.resolution || "no anchor"} · {pack.durationMin} min
           </p>
         </div>
         {running ? (
           <button onClick={stop} className="rounded-md border border-danger/50 px-4 py-2 text-sm font-bold text-danger hover:bg-danger/10 transition-colors">
-            ⏹ Stop (keeps what&apos;s built)
+            Stop — keeps what&apos;s built
           </button>
         ) : (
           <>
             {phase === "idle" && (
               <button onClick={() => start(false)} className="btn btn-primary">
-                ▶ Start AI build
+                <IconPlay size={15} />
+                Start AI build
               </button>
             )}
             {(phase === "stopped" || phase === "error") && (
               <>
                 <button onClick={() => start(false)} className="btn btn-primary">
-                  ▶ Resume build
+                  <IconPlay size={15} />
+                  Resume build
                 </button>
                 <button onClick={() => start(true)} className="btn btn-secondary">
-                  ↻ Regenerate all
+                  <IconRefresh size={15} />
+                  Regenerate all
                 </button>
               </>
             )}
             {phase === "done" && (
               <button onClick={() => start(true)} className="btn btn-primary">
-                ↻ Regenerate all
+                <IconRefresh size={15} />
+                Regenerate all
               </button>
             )}
             <Link href={`/materials/${materialId}/edit`} className="btn btn-secondary">
-              ✏️ Open in Builder
+              <IconPencil size={15} />
+              Open in Builder
             </Link>
             <Link href={`/materials/${materialId}/print`} className="btn btn-secondary">
-              🖨 Print Preview
+              <IconPrinter size={15} />
+              Print preview
             </Link>
           </>
         )}
@@ -630,7 +643,12 @@ function RedoButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
       disabled={busy}
       className="shrink-0 rounded border border-brand2/50 px-2 py-0.5 text-[11px] font-bold text-brand2 hover:bg-brand2/10 disabled:opacity-40 transition-colors"
     >
-      {busy ? "✨ Redoing…" : "↻ Redo"}
+      {busy ? (
+        <IconSpark size={12} className="inline" />
+      ) : (
+        <IconRefresh size={12} className="inline" />
+      )}{" "}
+      {busy ? "Redoing…" : "Redo"}
     </button>
   );
 }

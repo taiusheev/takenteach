@@ -164,3 +164,67 @@ export const IconClose = (p: IconProps) => (
     <path d="m6 6 12 12M18 6 6 18" />
   </Svg>
 );
+
+/* ── Action icons ──────────────────────────────────────────────────────────
+   Added to retire the emoji in the build flow's buttons. Emoji are the fastest
+   way to make a professional tool look like a hobby project, and they are not
+   merely a style problem: they render as a different glyph on every platform,
+   they inherit no colour so a "printer" stays black on a brand-filled button,
+   and a screen reader announces "high voltage" where the label says Build. */
+
+export const IconPlay = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M7 4.8v14.4a.6.6 0 0 0 .92.5l11.3-7.2a.6.6 0 0 0 0-1L7.92 4.3a.6.6 0 0 0-.92.5Z" />
+  </Svg>
+);
+
+export const IconPencil = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 20h4.2l9.4-9.4a2.1 2.1 0 0 0 0-3l-1.2-1.2a2.1 2.1 0 0 0-3 0L4 15.8Z" />
+    <path d="m14.5 6.5 3 3" />
+  </Svg>
+);
+
+export const IconPrinter = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M7 9V4h10v5" />
+    <path d="M7 18H5.5A1.5 1.5 0 0 1 4 16.5v-5A2.5 2.5 0 0 1 6.5 9h11a2.5 2.5 0 0 1 2.5 2.5v5a1.5 1.5 0 0 1-1.5 1.5H17" />
+    <rect x="7" y="14" width="10" height="6" rx="1" />
+  </Svg>
+);
+
+export const IconRefresh = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M20 11.5A8 8 0 1 0 18.4 17" />
+    <path d="M20 5.5V12h-6" />
+  </Svg>
+);
+
+/** The "AI did this" cue. Used where a build or a rewrite is being started. */
+export const IconSpark = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 3.5c.9 4.6 1.8 5.5 6.4 6.4-4.6.9-5.5 1.8-6.4 6.4-.9-4.6-1.8-5.5-6.4-6.4 4.6-.9 5.5-1.8 6.4-6.4Z" />
+    <path d="M18.5 16.2c.4 1.9.8 2.3 2.7 2.7-1.9.4-2.3.8-2.7 2.7-.4-1.9-.8-2.3-2.7-2.7 1.9-.4 2.3-.8 2.7-2.7Z" />
+  </Svg>
+);
+
+export const IconDoc = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5.5 4.5A1.5 1.5 0 0 1 7 3h7l5 5v11.5a1.5 1.5 0 0 1-1.5 1.5H7a1.5 1.5 0 0 1-1.5-1.5Z" />
+    <path d="M14 3v5h5" />
+  </Svg>
+);
+
+export const IconStack = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m12 3 8.5 4.5L12 12 3.5 7.5 12 3Z" />
+    <path d="m3.5 12 8.5 4.5 8.5-4.5" />
+    <path d="m3.5 16.5 8.5 4.5 8.5-4.5" />
+  </Svg>
+);
+
+export const IconWrench = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M15.5 4.5a5 5 0 0 0-6.3 6.3L4 16l4 4 5.2-5.2a5 5 0 0 0 6.3-6.3l-3 3-2.3-2.3Z" />
+  </Svg>
+);
