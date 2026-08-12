@@ -228,3 +228,15 @@ export const IconWrench = (p: IconProps) => (
     <path d="M15.5 4.5a5 5 0 0 0-6.3 6.3L4 16l4 4 5.2-5.2a5 5 0 0 0 6.3-6.3l-3 3-2.3-2.3Z" />
   </Svg>
 );
+
+/** Six dots — the universal 'grab me' affordance for a reorderable row. */
+export const IconGrip = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="9" cy="6" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="15" cy="6" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="9" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="15" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="9" cy="18" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="15" cy="18" r="1.3" fill="currentColor" stroke="none" />
+  </Svg>
+);

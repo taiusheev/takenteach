@@ -42,6 +42,29 @@ export const evidenceCardSchema = z.object({
   quoteAttribution: z.string().optional().default(""),
   /** The line a debater says to the judge, starting "Judge, ...". */
   roundApplication: z.string().optional().default(""),
+
+  /* ── VERIFICATION ────────────────────────────────────────────────────────
+     Every card on this deck is DRAFTED BY A MODEL, and the build screen has
+     always said so: "AI-drafted citations must be verified against real
+     sources before this pack goes to review." Until now that warning was the
+     entire mechanism. There was nowhere to record that somebody had actually
+     checked a card, so the warning applied equally to a citation nobody had
+     looked at and one a coach had confirmed line by line — which means it
+     stopped being read.
+
+     These two fields make the check a fact about the card rather than a
+     sentence on the page. Both are optional with defaults, so every pack
+     already in the library keeps parsing: `parseContent` re-runs this schema
+     on read, so existing cards gain `url: ""` and `verified: false` without a
+     migration.
+
+     `verified` is deliberately NOT set by the model. It means a person opened
+     the source and confirmed the quotation exists — the one claim an AI cannot
+     make about its own output. */
+  /** Where the source can be read. The thing a verifier actually needs. */
+  url: z.string().optional().default(""),
+  /** A human opened the source and confirmed this card. Never set by the AI. */
+  verified: z.boolean().optional().default(false),
 });
 export type EvidenceCard = z.infer<typeof evidenceCardSchema>;
 

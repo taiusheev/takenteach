@@ -22,6 +22,9 @@ import { ChecklistResult } from "@/lib/checklist";
 import { coherenceReport } from "@/lib/coherence";
 import ChecklistPanel from "./ChecklistPanel";
 import AiPanel from "@/components/build/AiPanel";
+import SourcesPanel from "@/components/build/SourcesPanel";
+import { useDragOrder } from "@/components/build/useDragOrder";
+import { IconGrip } from "@/components/shell/icons";
 
 /**
  * Maps each checklist rule id to the DOM anchor of the field it polices, so a
@@ -189,6 +192,14 @@ export default function Builder({
 
   const set = <K extends keyof LessonPack>(key: K, value: LessonPack[K]) =>
     setPack((p) => ({ ...p, [key]: value }));
+
+  /* Drag-to-reorder for the activity list. The ↑/↓ buttons stay — see
+     components/build/useDragOrder.ts on why this is an addition rather than a
+     replacement. */
+  const activityDrag = useDragOrder(pack.activities, (next) =>
+    set("activities", next)
+  );
+
 
   // ── array helpers ──
   function updateAt<T>(arr: T[], i: number, patch: Partial<T>): T[] {
@@ -460,7 +471,7 @@ export default function Builder({
               onClick={() =>
                 set("evidenceCards", [
                   ...pack.evidenceCards,
-                  { id: String.fromCharCode(65 + pack.evidenceCards.length), side: "pro", institution: "", author: "", year: "", publication: "", paraphrase: "", translation: "", tacticalNote: "", limit: "", event: "", quote: "", quoteAttribution: "", roundApplication: "" },
+                  { id: String.fromCharCode(65 + pack.evidenceCards.length), side: "pro", institution: "", author: "", year: "", publication: "", paraphrase: "", translation: "", tacticalNote: "", limit: "", event: "", quote: "", quoteAttribution: "", roundApplication: "", url: "", verified: false },
                 ])
               }
             />
@@ -469,8 +480,23 @@ export default function Builder({
           {/* ── Activities ───────────────────────────────────── */}
           <Section id="sec-activities" title="Student Activities" hint="The ordered student-facing pages. Every prompt needs an expected answer — it feeds the teacher answer key.">
             {pack.activities.map((a: Activity, i) => (
-              <div key={i} className="mb-4 rounded-lg border border-inkline p-3">
+              <div
+                key={i}
+                {...activityDrag.rowProps(i)}
+                className="mb-4 rounded-lg border border-inkline p-3 transition-shadow data-[dragging=true]:opacity-45 data-[drop-target=true]:border-brand data-[drop-target=true]:shadow-[0_0_0_2px_var(--brand)]"
+              >
                 <div className="mb-2 flex flex-wrap items-center gap-2">
+                  {/* The grab handle. Dragging is bound to this rather than to
+                      the whole row, or every text input inside would stop being
+                      selectable — you would drag the card instead of the words. */}
+                  <span
+                    {...activityDrag.handleProps(i)}
+                    title="Drag to reorder"
+                    aria-hidden
+                    className="-ml-1 cursor-grab rounded p-1 text-fg3 transition-colors hover:text-fg1 active:cursor-grabbing"
+                  >
+                    <IconGrip size={15} />
+                  </span>
                   <select className="field-input !w-44" value={a.kind} onChange={(e) => set("activities", updateAt(pack.activities, i, { kind: e.target.value as Activity["kind"] }))} aria-label="Activity kind">
                     {ACTIVITY_KINDS.map((k) => (
                       <option key={k} value={k}>{k}</option>
@@ -652,6 +678,10 @@ export default function Builder({
         <div className="flex flex-col gap-3 lg:sticky lg:top-6 lg:self-start">
           <SectionNav checklist={checklist} onJump={scrollToId} />
           <AiPanel materialId={materialId} />
+          <SourcesPanel
+            pack={pack}
+            onChange={(cards) => set("evidenceCards", cards)}
+          />
           {checklist ? (
             <ChecklistPanel result={checklist} onJumpTo={jumpToCheck} />
           ) : (
