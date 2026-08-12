@@ -50,6 +50,8 @@ export interface UserRow {
   email_verified_at: string | null;
   created_at: string;
   last_login_at: string | null;
+  /** JSON — this teacher's own defaults. See lib/auth/preferences.ts. */
+  preferences: string;
 }
 
 export interface MembershipRow {
@@ -223,6 +225,24 @@ export async function setPassword(
     "UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?",
     [passwordHash, mustChange ? 1 : 0, userId]
   );
+}
+
+/**
+ * A teacher's own name and defaults.
+ *
+ * Scoped by userId rather than taking a whole user object, so a caller cannot
+ * pass one user's id with another's values. Name and preferences update
+ * together because they are one form and one save.
+ */
+export async function updateAccount(
+  userId: number,
+  input: { name: string; preferences: string }
+): Promise<void> {
+  await run("UPDATE users SET name = ?, preferences = ? WHERE id = ?", [
+    input.name.trim(),
+    input.preferences,
+    userId,
+  ]);
 }
 
 export async function markLoggedIn(userId: number): Promise<void> {

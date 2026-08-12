@@ -15,6 +15,7 @@ export default function MakeSwitcher({
   prefillSubject,
   prefillResolution = "",
   prefillGradeBand = "",
+  prefillDurationMin,
   initialMode = "lesson",
 }: {
   prefillSkillFocus?: string;
@@ -22,6 +23,7 @@ export default function MakeSwitcher({
   /** motion wording handed over from the Motion Library */
   prefillResolution?: string;
   prefillGradeBand?: string;
+  prefillDurationMin?: number;
   initialMode?: "lesson" | "unit";
 }) {
   const [mode, setMode] = useState<"lesson" | "unit">(initialMode);
@@ -88,6 +90,7 @@ export default function MakeSwitcher({
           prefillSubject={prefillSubject}
           prefillResolution={prefillResolution}
           prefillGradeBand={prefillGradeBand}
+          prefillDurationMin={prefillDurationMin}
         />
       ) : (
         <UnitBuilder />

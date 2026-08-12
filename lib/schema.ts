@@ -296,6 +296,27 @@ CREATE INDEX IF NOT EXISTS idx_versions_material    ON material_versions (materi
 CREATE INDEX IF NOT EXISTS idx_memberships_user     ON memberships (user_id, status);
 CREATE INDEX IF NOT EXISTS idx_memberships_org      ON memberships (org_id, status);
 CREATE INDEX IF NOT EXISTS idx_sessions_user        ON sessions (user_id);
+
+-- ── ALTERS ──────────────────────────────────────────────────────────────────
+-- Columns added after the tables above were first created. They live here
+-- rather than in the CREATE, because a CREATE TABLE IF NOT EXISTS does nothing
+-- at all on a database that already has the table — so adding a column up there
+-- would work on a fresh database and silently skip every existing one.
+--
+-- ADD COLUMN IF NOT EXISTS keeps ensureSchema() idempotent, which is the whole
+-- contract of this file: it is run by db:migrate, possibly repeatedly, and must
+-- never fail on a database that is already correct.
+
+-- A teacher's own defaults — grade band, lesson length, preferred track.
+-- Stored as JSON text for the same reason the content column is: it is read
+-- straight into a zod schema that applies defaults, so adding a preference
+-- later needs no migration and no backfill. Per USER, not per organization —
+-- two teachers in one school teach different year groups.
+--
+-- (No backticks anywhere in this block. SCHEMA_SQL is one JS template literal
+-- and a single stray backtick ends the string mid-comment, which is exactly
+-- what the note at the top of the identity section warns about.)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences text NOT NULL DEFAULT '{}';
 `;
 
 /** Apply the schema. Idempotent — every statement is IF NOT EXISTS. */

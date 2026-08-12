@@ -13,6 +13,8 @@ import {
   IconReview,
   IconRounds,
   IconSearch,
+  IconSettings,
+  IconStack,
   IconStudents,
   type IconProps,
 } from "./icons";
@@ -99,12 +101,14 @@ export default function CommandPalette({
       { id: "new", label: "New lesson", hint: "Start a build", group: "Actions", icon: IconPlus, run: go("/materials/new") },
       { id: "lib", label: "Library", group: "Go to", icon: IconLibrary, run: go("/") },
       { id: "rev", label: "Review queue", group: "Go to", icon: IconReview, run: go("/review") },
+      { id: "tpl", label: "Templates", group: "Go to", icon: IconStack, run: go("/templates") },
       { id: "rnd", label: "Rounds", group: "Go to", icon: IconRounds, run: go("/rounds") },
       { id: "stu", label: "Students", group: "Go to", icon: IconStudents, run: go("/students") },
       { id: "ins", label: "Insights", group: "Go to", icon: IconInsights, run: go("/analytics") },
       { id: "fmt", label: "Formats", group: "Go to", icon: IconFormats, run: go("/formats") },
       { id: "mot", label: "Motions", group: "Go to", icon: IconMotions, run: go("/motions") },
       { id: "kit", label: "Style Kits", group: "Go to", icon: IconPalette, run: go("/style-kits") },
+      { id: "set", label: "Settings", group: "Go to", icon: IconSettings, run: go("/settings") },
       {
         id: "theme",
         label: "Toggle dark mode",

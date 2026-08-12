@@ -47,12 +47,14 @@ export default function QuickBuildWizard({
   prefillSubject,
   prefillResolution = "",
   prefillGradeBand = "",
+  prefillDurationMin,
 }: {
   prefillSkillFocus?: string;
   prefillSubject?: Subject;
   /** motion wording and age band handed over from the Motion Library */
   prefillResolution?: string;
   prefillGradeBand?: string;
+  prefillDurationMin?: number;
 } = {}) {
   const router = useRouter();
 
@@ -72,7 +74,7 @@ export default function QuickBuildWizard({
   // A motion arriving from the library is already the anchor — the teacher
   // shouldn't retype a wording the library holds verbatim.
   const [resolution, setResolution] = useState(prefillResolution);
-  const [durationMin, setDurationMin] = useState(120);
+  const [durationMin, setDurationMin] = useState(prefillDurationMin ?? 120);
   const [gradeBand, setGradeBand] = useState<string>(prefillGradeBand || "Grades 6–8");
   const [rigorLevel, setRigorLevel] = useState<RigorLevel>("standard");
   const [format, setFormat] = useState<string>("auto");

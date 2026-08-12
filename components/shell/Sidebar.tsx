@@ -16,6 +16,8 @@ import {
   IconPlus,
   IconReview,
   IconRounds,
+  IconSettings,
+  IconStack,
   IconStudents,
   type IconProps,
 } from "./icons";
@@ -67,6 +69,7 @@ const SECTIONS: { title: string; items: Item[] }[] = [
     items: [
       { href: "/", label: "Library", icon: IconLibrary, exact: true },
       { href: "/review", label: "Review", icon: IconReview },
+      { href: "/templates", label: "Templates", icon: IconStack },
     ],
   },
   {
@@ -82,6 +85,7 @@ const SECTIONS: { title: string; items: Item[] }[] = [
       { href: "/formats", label: "Formats", icon: IconFormats },
       { href: "/motions", label: "Motions", icon: IconMotions },
       { href: "/style-kits", label: "Style Kits", icon: IconPalette },
+      { href: "/settings", label: "Settings", icon: IconSettings },
     ],
   },
 ];
