@@ -107,6 +107,165 @@
   --border-soft: var(--line);
   --yellow: var(--brand);
   --gold: var(--brand-ink);
+
+  /* ── THE SCALES ─────────────────────────────────────────────────────────
+     Added with the workspace shell. Everything below is a scale rather than a
+     value, because the failure mode this prevents is the one already visible
+     in the codebase: a radius of `rounded-lg` here and `rounded-xl` there, a
+     transition of 150ms in one file and 200ms in the next. Nobody notices any
+     single instance; the sum is what makes an interface feel assembled. */
+
+  /* Radius. Rounded, but stopping well short of pill-shaped — a 12px card next
+     to a 9999px button is the "bubble UI" look the brief rules out. `--r-full`
+     exists only for avatars and dots. */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+  --r-2xl: 18px;
+  --r-full: 9999px;
+
+  /* Motion. Three durations and two curves, and that is the whole vocabulary.
+     `--ease-out` for anything entering or responding to a click — it starts
+     fast, which is what makes an interface feel quick rather than merely
+     animated. `--ease-spring` has a slight overshoot and is for one thing:
+     something appearing that wants to be noticed (a toast). */
+  --t-fast: 120ms;
+  --t-base: 180ms;
+  --t-slow: 280ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  /* Focus. ONE ring, defined once. A focus style that differs per component is
+     the most common way a keyboard user loses their place. */
+  --ring: 0 0 0 2px var(--surface-2), 0 0 0 4px var(--brand);
+  --ring-danger: 0 0 0 2px var(--surface-2), 0 0 0 4px var(--danger);
+
+  /* Stacking. Named so a new overlay does not get `z-[9999]` and win against
+     something it should sit under. */
+  --z-sticky: 20;
+  --z-drawer: 40;
+  --z-overlay: 50;
+  --z-toast: 60;
+
+  /* The shell's own measurements, shared by the sidebar and the content it
+     offsets — one source of truth, so they cannot drift apart. */
+  --sidebar-w: 244px;
+  --sidebar-w-collapsed: 64px;
+  --header-h: 56px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   DARK THEME
+   ══════════════════════════════════════════════════════════════════════════
+   Not an inversion. Inverting this palette would put #2563EB type on a
+   near-black page at 3.0:1 — under AA for anything you have to read — and turn
+   the off-white page into a pure black that makes every card edge glow.
+
+   Three deliberate decisions:
+
+   1. THE PAGE IS NAVY, NOT BLACK. The surfaces are the identity's own navy
+      family, dimmed. A neutral grey dark mode next to a blue-violet brand
+      reads as a different product with the lights off.
+
+   2. THE BRAND INVERTS ITS ROLE. On white, `--brand` is a mid blue carrying
+      white type. On navy that same blue manages 3.0:1, so in dark mode
+      `--brand` becomes the LIGHT step (the existing `--brand-lift`, which was
+      already computed for exactly this surface) and carries DARK ink. A brand
+      colour is a relationship between a fill and its text, not a hex.
+
+   3. BORDERS GET STRONGER, NOT WEAKER. On a light page a hairline separates by
+      being darker than the surface; in the dark the same logic needs more
+      contrast, not less, or every panel edge dissolves.
+
+   `prefers-color-scheme` is the default and `data-theme` overrides it in both
+   directions, so the toggle can force light on a dark OS and vice versa. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface-1: #0b1220;
+    --surface-2: #131c2e;
+    --surface-3: #1b2740;
+    --line: #25324c;
+    --line-strong: #3a4a6e;
+
+    --text-1: #f1f5f9;
+    --text-2: #c7d2e1;
+    --text-3: #93a3bb;
+
+    --brand: #60a5fa;
+    --brand-ink: #93c5fd;
+    --brand-soft: #17294a;
+    --onbrand: #08111f;
+
+    --brand-2: #a78bfa;
+    --brand-2-ink: #c4b5fd;
+    --brand-2-soft: #241b47;
+
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --danger: #f87171;
+
+    --grad-brand: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
+
+    /* Shadow does almost nothing on a dark surface — depth there comes from
+       the border and a lighter panel. Kept subtle rather than removed so
+       elevated things still detach slightly. */
+    --elev: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --elev-lg: 0 8px 24px -6px rgba(0, 0, 0, 0.55);
+    --elev-brand: 0 8px 20px -6px rgba(96, 165, 250, 0.35);
+    --ring: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--brand);
+    --ring-danger: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--danger);
+  }
+}
+
+:root[data-theme="dark"] {
+  --surface-1: #0b1220;
+  --surface-2: #131c2e;
+  --surface-3: #1b2740;
+  --line: #25324c;
+  --line-strong: #3a4a6e;
+
+  --text-1: #f1f5f9;
+  --text-2: #c7d2e1;
+  --text-3: #93a3bb;
+
+  --brand: #60a5fa;
+  --brand-ink: #93c5fd;
+  --brand-soft: #17294a;
+  --onbrand: #08111f;
+
+  --brand-2: #a78bfa;
+  --brand-2-ink: #c4b5fd;
+  --brand-2-soft: #241b47;
+
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --danger: #f87171;
+
+  --grad-brand: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
+
+  --elev: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --elev-lg: 0 8px 24px -6px rgba(0, 0, 0, 0.55);
+  --elev-brand: 0 8px 20px -6px rgba(96, 165, 250, 0.35);
+  --ring: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--brand);
+  --ring-danger: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--danger);
+}
+
+/* PRINT IS ALWAYS LIGHT. A pack is printed on paper; a dark theme reaching the
+   print stylesheet would empty an ink cartridge per lesson. The print rules
+   further down set their own colours, and this makes sure the tokens they
+   inherit are the light ones no matter what the screen is doing. */
+@media print {
+  :root {
+    --surface-1: #f8fafc;
+    --surface-2: #ffffff;
+    --surface-3: #f1f5f9;
+    --line: #e2e8f0;
+    --text-1: #0a1f44;
+    --text-2: #475569;
+    --text-3: #64748b;
+  }
 }
 
 @theme inline {
@@ -143,6 +302,216 @@
   --font-display: var(--font-lexend);
   --font-sans: var(--font-lexend);
   --font-mono: var(--font-techmono);
+
+  /* the scales, as utilities */
+  --radius-xs: var(--r-xs);
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+  --radius-2xl: var(--r-2xl);
+}
+
+/* ── ONE FOCUS STYLE ───────────────────────────────────────────────────────
+   `:focus-visible`, not `:focus`, so a mouse click on a button does not leave a
+   ring behind it — the reason so many products end up removing focus styles
+   altogether and locking keyboard users out. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+  border-radius: var(--r-sm);
+}
+
+/* ── MOTION, AND PERMISSION TO SKIP IT ─────────────────────────────────────
+   Every animation in the product is opt-out in one place. This is not a
+   courtesy: for some people motion causes nausea, and an interface that
+   animates anyway is one they cannot use. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── SKELETONS ─────────────────────────────────────────────────────────────
+   Shown while a page's data is in flight, instead of a blank screen or a
+   spinner. The shape matters more than the shimmer: a skeleton that matches
+   the layout it replaces means nothing moves when the content lands, which is
+   the difference between "fast" and "janky" regardless of actual speed. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-3);
+  border-radius: var(--r-sm);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--surface-2) 70%, transparent),
+    transparent
+  );
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-sweep {
+  100% {
+    transform: translateX(100%);
+  }
+}
+/* A skeleton is decoration standing in for content. Screen readers should hear
+   the loading state announced once, not read a row of empty boxes. */
+.skeleton-group {
+  cursor: progress;
+}
+
+/* ── TOASTS ────────────────────────────────────────────────────────────────
+   Bottom-right, above everything, and never more than a few at once. The
+   spring easing is used here and nowhere else: a toast is the one thing in the
+   product that has to catch the eye of someone already looking elsewhere. */
+.toast-viewport {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+  width: min(22rem, calc(100vw - 2rem));
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding: 0.75rem 0.875rem;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  box-shadow: var(--elev-lg);
+  animation: toast-in var(--t-slow) var(--ease-spring);
+}
+.toast[data-leaving="true"] {
+  animation: toast-out var(--t-base) var(--ease-out) forwards;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+.toast-ok {
+  border-left: 3px solid var(--ok);
+}
+.toast-error {
+  border-left: 3px solid var(--danger);
+}
+.toast-info {
+  border-left: 3px solid var(--brand);
+}
+
+/* ── KEYBOARD HINTS ────────────────────────────────────────────────────────
+   A shortcut nobody can discover is a shortcut nobody uses, so the keys are
+   drawn wherever the action is. */
+kbd,
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--r-xs);
+  background: var(--surface-3);
+  color: var(--text-3);
+  font-family: var(--font-lexend), sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+/* ── THE WORKSPACE SHELL ───────────────────────────────────────────────────
+   Sidebar + header + content, sized from the shared measurements above so the
+   content offset can never drift from the rail's actual width. */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font-size: 13.5px;
+  font-weight: 550;
+  transition: background-color var(--t-fast) var(--ease-out),
+    color var(--t-fast) var(--ease-out);
+}
+.nav-item:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+.nav-item[aria-current="page"] {
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+  font-weight: 650;
+}
+.nav-item[aria-current="page"] .nav-icon {
+  color: var(--brand);
+}
+.nav-icon {
+  flex-shrink: 0;
+  color: var(--text-3);
+  transition: color var(--t-fast) var(--ease-out);
+}
+/* Show one icon in light, the other in dark, without asking JavaScript which
+   theme resolved — on `system` that would mean a media-query listener for a
+   purely visual swap. */
+.dark-show {
+  display: none;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dark-show {
+    display: inline;
+  }
+  :root:not([data-theme="light"]) .dark-hide {
+    display: none;
+  }
+}
+:root[data-theme="dark"] .dark-show {
+  display: inline;
+}
+:root[data-theme="dark"] .dark-hide {
+  display: none;
+}
+:root[data-theme="light"] .dark-show {
+  display: none;
+}
+:root[data-theme="light"] .dark-hide {
+  display: inline;
+}
+
+.nav-section {
+  padding: 0 0.6rem;
+  margin-bottom: 0.25rem;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
 }
 
 body {

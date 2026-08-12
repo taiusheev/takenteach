@@ -23,11 +23,13 @@ import {
   Work_Sans,
 } from "next/font/google";
 import "./globals.css";
-import NavLinks from "@/components/NavLinks";
-import AppChrome from "@/components/AppChrome";
-import Logo, { LogoMark } from "@/components/Logo";
+import { LogoMark } from "@/components/Logo";
 import AccountMenu from "@/components/AccountMenu";
+import Workspace from "@/components/shell/Workspace";
+import { ThemeScript } from "@/components/shell/Theme";
+import { type PaletteLesson } from "@/components/shell/CommandPalette";
 import { getSession } from "@/lib/auth/dal";
+import { listMaterials } from "@/lib/db";
 
 const bebas = Bebas_Neue({
   weight: "400",
@@ -108,66 +110,72 @@ export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const session = await getSession();
+
+  /* The palette's jump-to-a-lesson list. One indexed query, and only for a
+     signed-in visitor — an anonymous request must not pay for it and has
+     nothing to jump to. Trimmed to what the palette displays rather than
+     handing a client component every pack's full content, which is megabytes
+     of JSON serialised into the page for a list of titles. */
+  let lessons: PaletteLesson[] = [];
+  if (session) {
+    lessons = (await listMaterials(session.scope)).map((m) => ({
+      id: m.id,
+      title: m.title,
+      subject: m.subject,
+      status: m.status,
+    }));
+  }
+
   return (
     <html
       lang="en"
       className={`${bebas.variable} ${lexend.variable} ${techMono.variable} ${righteous.variable} ${comicNeue.variable} ${marker.variable} ${PRINT_FONTS} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col">
-        <AppChrome>
-        {/* Gap and padding tighten on small screens: at 375px this row wanted
-            807px, and 96px of that was spacing alone. */}
-        <header className="no-print sticky top-0 z-20 flex items-center gap-3 sm:gap-6 border-b border-inkline bg-surface/85 px-3 sm:px-6 h-16 backdrop-blur-md supports-[backdrop-filter]:bg-surface/75">
-          {/* The one hairline of brand in the chrome: a 2px gradient seam along
-              the bottom of the header, sitting ON the border rather than adding
-              height. It is the cheapest possible signature — the whole product
-              reads as branded from any page without a single coloured panel. */}
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5"
-            style={{ backgroundImage: "var(--grad-brand)", opacity: 0.9 }}
-          />
-          <Link
-            href="/"
-            className="group flex shrink-0 items-center rounded-lg transition-opacity hover:opacity-85"
+      <head>
+        <ThemeScript />
+      </head>
+      <body className="min-h-full">
+        {/* THE SIGNED-OUT SURFACE keeps the old arrangement. Login, signup and
+            the reset screens have no navigation to offer someone without an
+            account, and they carry their own logo — a workspace rail there
+            would be nine links that all bounce to /login. */}
+        {!session ? (
+          <main className="flex-1">{children}</main>
+        ) : (
+          <Workspace
+            lessons={lessons}
+            header={
+              <>
+                {/* The mark lives in the header only below `lg`, where the rail
+                    is a drawer and the brand would otherwise be nowhere on the
+                    page. Above that the sidebar carries it. */}
+                <Link
+                  href="/"
+                  className="mr-1 flex shrink-0 items-center rounded-lg transition-opacity hover:opacity-85 lg:hidden"
+                >
+                  <LogoMark size={24} />
+                  <span className="sr-only">TakenTeach — home</span>
+                </Link>
+                <AccountMenu
+                  account={{
+                    name: session.name,
+                    email: session.email,
+                    orgName: session.orgName,
+                    orgRole: session.orgRole,
+                    orgKind: session.orgKind,
+                    membershipStatus: session.membershipStatus,
+                    otherOrgs: session.memberships
+                      .filter((m) => m.orgId !== session.orgId)
+                      .map((m) => ({ orgName: m.orgName, status: m.status })),
+                  }}
+                />
+              </>
+            }
           >
-            {/* Below `sm` the wordmark drops and the mark carries the brand
-                alone — it is the one part of the header that can go without
-                costing a destination. The link keeps an accessible name either
-                way. */}
-            <Logo size={26} className="hidden sm:inline-flex" />
-            <LogoMark size={28} className="sm:hidden" />
-            <span className="sr-only sm:hidden">TakenTeach — home</span>
-          </Link>
-          <NavLinks />
-          {/* Who you are and the way out.
-              This slot held a ROLE SWITCHER — a select box that let anyone
-              choose whether they were a founder or a teacher. That was honest
-              while there was no authentication and every permission in the
-              product was decorative; it is indefensible now, because a control
-              that changes what you are allowed to do is not a preference. It is
-              gone, along with the `ascent-role` cookie it wrote and the route
-              that set it. Your role comes from your membership in the
-              organization you are acting in, and nothing in the browser can
-              change it. */}
-          {session && (
-            <AccountMenu
-              account={{
-                name: session.name,
-                email: session.email,
-                orgName: session.orgName,
-                orgRole: session.orgRole,
-                orgKind: session.orgKind,
-                membershipStatus: session.membershipStatus,
-                otherOrgs: session.memberships
-                  .filter((m) => m.orgId !== session.orgId)
-                  .map((m) => ({ orgName: m.orgName, status: m.status })),
-              }}
-            />
-          )}
-        </header>
-        </AppChrome>
-        <main className="flex-1">{children}</main>
+            {children}
+          </Workspace>
+        )}
       </body>
     </html>
   );
