@@ -21,6 +21,7 @@ import { LESSON_DESIGNS } from "@/lib/lesson-designs";
 import { ChecklistResult } from "@/lib/checklist";
 import { coherenceReport } from "@/lib/coherence";
 import ChecklistPanel from "./ChecklistPanel";
+import AiPanel from "@/components/build/AiPanel";
 
 /**
  * Maps each checklist rule id to the DOM anchor of the field it polices, so a
@@ -650,6 +651,7 @@ export default function Builder({
         {/* ── Right rail: section nav + live checklist ── */}
         <div className="flex flex-col gap-3 lg:sticky lg:top-6 lg:self-start">
           <SectionNav checklist={checklist} onJump={scrollToId} />
+          <AiPanel materialId={materialId} />
           {checklist ? (
             <ChecklistPanel result={checklist} onJumpTo={jumpToCheck} />
           ) : (
