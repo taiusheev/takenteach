@@ -22,6 +22,7 @@ import { computeTeachingSignal, signalForLesson } from "@/lib/teaching-signal";
 import { LessonPack, packContentHash } from "@/lib/lesson-pack-schema";
 import { packReadiness } from "@/lib/readiness";
 import { nextStep } from "@/lib/next-step";
+import { describeCoverage, qaCoverage, type QaScope } from "@/lib/qa-scope";
 import UniquenessPanel from "@/components/UniquenessPanel";
 import RoundEvidencePanel from "@/components/RoundEvidencePanel";
 import { runChecklistFor, earlierSiblingVocab } from "@/lib/checklist";
@@ -45,8 +46,10 @@ import VersionHistory from "@/components/VersionHistory";
 import type { ContentQa } from "@/lib/ai";
 import WorkflowActions from "@/components/WorkflowActions";
 import DeleteMaterialButton from "@/components/DeleteMaterialButton";
+import DuplicateButton from "@/components/DuplicateButton";
 import StyleKitPicker from "@/components/StyleKitPicker";
 import DesignButton from "@/components/DesignButton";
+import { IconPencil, IconPlay, IconPrinter } from "@/components/shell/icons";
 
 export const dynamic = "force-dynamic";
 
@@ -83,12 +86,17 @@ export default async function MaterialPage(ctx: {
   // Last stored content-QA report, if any (parsed defensively). The stored copy
   // carries a `contentHash` the QA route stamps on at save time; it isn't part
   // of the model's own output shape, which is why it's widened here.
-  let qaReport: (ContentQa & { contentHash?: string }) | null = null;
+  let qaReport:
+    | (ContentQa & { contentHash?: string; scope?: QaScope })
+    | null = null;
   if (isPack) {
     const raw = (material.content as LessonPack).contentQaJson;
     if (raw) {
       try {
-        qaReport = JSON.parse(raw) as ContentQa & { contentHash?: string };
+        qaReport = JSON.parse(raw) as ContentQa & {
+          contentHash?: string;
+          scope?: QaScope;
+        };
       } catch {
         qaReport = null;
       }
@@ -173,6 +181,14 @@ export default async function MaterialPage(ctx: {
     checklist,
     qa: qaReport,
     qaStale: !!qaReport && qaReport.contentHash !== packContentHash(packContent),
+    /* Names the pages the stored verdict no longer covers, so a teacher can
+       finish editing and pay for one review instead of one per session. */
+    qaScopeNote: qaReport
+      ? describeCoverage(
+          qaCoverage(packContent, qaReport.scope ?? null),
+          packContent.activities.length
+        )
+      : undefined,
   });
 
   const activeBudget = budgetMode();
@@ -509,7 +525,7 @@ export default async function MaterialPage(ctx: {
         : "border-inkline bg-inkcard";
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-10">
+    <div className="mx-auto max-w-5xl">
       <div className="mb-5 flex flex-wrap items-center gap-4">
         <div
           className="font-display flex h-12 w-12 items-center justify-center rounded-lg text-xl text-white"
@@ -569,40 +585,57 @@ export default async function MaterialPage(ctx: {
               materialId={material.id}
               subject={material.subject}
               transitions={transitions}
+              /* `nextStep` mirrors the review gate, so "there is work to do"
+                 and "submitting would 422" are the same condition. */
+              blockedReason={step.tone === "work" ? step.headline : undefined}
             />
           </div>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-inkline/60 pt-3">
+          {/* One row of exits, all at the same weight — the ranked action is
+              the CTA above, and a second bold button here would compete with
+              it. The play glyph was a typed "▶", which sits on the baseline
+              and renders as a different character on every platform. */}
           {isPack && readiness?.canTeach && (
             <Link
               href={`/materials/${material.id}/teach`}
-              className="rounded-md border border-accent/50 bg-accent/10 px-4 py-2 text-sm font-bold text-accent hover:bg-accent/20"
+              className="btn btn-secondary"
             >
-              ▶ Teach it
+              <IconPlay size={13} />
+              Teach it
+            </Link>
+          )}
+          {editable && (
+            <Link
+              href={`/materials/${material.id}/edit`}
+              className="btn btn-secondary"
+            >
+              <IconPencil size={13} />
+              Edit the lesson
             </Link>
           )}
           <Link
             href={`/materials/${material.id}/print`}
             className="btn btn-secondary"
           >
+            <IconPrinter size={13} />
             Print &amp; download
           </Link>
-          {editable && (
-            <Link
-              href={`/materials/${material.id}/edit`}
-              className="btn btn-secondary"
-            >
-              Open in Builder
-            </Link>
-          )}
           {canCreate(role) && (
-            <Link
-              href={`/materials/${material.id}/fork`}
-              className="btn btn-secondary"
-            >
-              Remix / Fork
-            </Link>
+            <>
+              <DuplicateButton
+                materialId={material.id}
+                title={material.title}
+                className="btn btn-secondary"
+              />
+              <Link
+                href={`/materials/${material.id}/fork`}
+                className="btn btn-secondary"
+              >
+                Remix
+              </Link>
+            </>
           )}
           <div className="flex-1" />
           {material.status === "draft" &&

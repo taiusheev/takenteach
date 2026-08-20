@@ -128,8 +128,12 @@ export const SCALE = {
  * kind of error a token system is supposed to make impossible, so the value
  * lives on the register where the disagreement actually is.
  */
-export const TITLE_RATIO = { novice: 2.69, elite: 2.08 } as const;
-export const COVER_TITLE_RATIO = { novice: 4.8, elite: 4.33 } as const;
+/* JV measured from the source pack: a 17pt page title over 9pt body is 1.89x.
+   It is the flattest of the three because the register carries hierarchy in
+   rules and position rather than in size — his sheets run 13 distinct type
+   sizes per page and none of them shouts. */
+export const TITLE_RATIO = { novice: 2.69, elite: 2.08, jv: 1.9 } as const;
+export const COVER_TITLE_RATIO = { novice: 4.8, elite: 4.33, jv: 4.33 } as const;
 
 export type SemanticRole = keyof typeof SEMANTIC;
 export type LayerName = keyof typeof LAYERS;

@@ -406,6 +406,56 @@ export const HOUSE_DESIGN_CSS = `
     linear-gradient(90deg, color-mix(in srgb, var(--pk-accent) 6%, transparent) 1px, transparent 1px) !important;
   background-size: 20px 20px !important;
 }
+
+/* ── THE COVER ART LAYER ────────────────────────────────────────────────────
+   Absolutely positioned, out of flow, behind everything, and — the reason it
+   is built this way — invisible to the runtime fit pass, which measures
+   .pk-fit — a title page has no continuation sheet, so anything that can add
+   height to one can silently delete its own bottom edge. This cannot.
+
+   The layer sits at z-index 0 with the content column lifted to 1, rather than
+   at -1: a negative index would drop the art behind the page's own background
+   and the whole thing would simply never appear. */
+.pk-root .pk-cover .pk-cvr-art{
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  z-index: 0; pointer-events: none;
+}
+.pk-root .pk-cover > .pk-fit{ position: relative; z-index: 1; }
+
+/* ── THE SLACK SPACERS ──────────────────────────────────────────────────────
+   Zero-height boxes that grow into space the sheet already had spare, at a
+   1:2 ratio: the composition drops by a third of the surplus, and the lower
+   two thirds stay open as the void the seal fills. flex-grow can only ever
+   distribute FREE space, so on a cover with none they collapse and the layout
+   is untouched — which is why moving the composition down cannot be the cause
+   of an overflowing title page. */
+.pk-root .pk-cover .pk-cvr-space{ flex: 1 1 0; min-height: 0; width: 100%; }
+.pk-root .pk-cover .pk-cvr-space--seal{ flex-grow: 2; position: relative; }
+
+/* The seal is centred on ITS OWN box — the void — not on the page, so it
+   follows the composition instead of being pinned to a guessed coordinate.
+   It is wider than the text column on purpose: the rings run out past the
+   trim, and the arcs surviving in the side gutters are what stop a centred
+   motif reading as a logo stamped in the middle of the sheet.
+
+   z-index -1, not 0: .pk-fit above carries z-index 1 and so opens a stacking
+   context, and a positioned child at 0 would paint OVER the cards in it. At
+   -1 it drops behind the content but still above the page's own background,
+   which is exactly the one layer it wants. */
+.pk-root .pk-cover .pk-cvr-seal{
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 794px; height: 620px;
+  z-index: -1; pointer-events: none;
+}
+/* The size is set per register on the element itself; this carries the face.
+   The negative tracking is what stops two digits reading as two objects. */
+.pk-root .pk-cvr-art-num{
+  font-family: var(--pk-display), Georgia, serif;
+  font-weight: 900; letter-spacing: -10px;
+}
+
 /* The lesson code sits in a square frame, not a badge disc: it reads as the
    spine label of a document rather than as a sticker. */
 .pk-root .pk-cover .pk-cover-glyph{
@@ -547,6 +597,44 @@ export const HOUSE_DESIGN_CSS = `
 .pk-root .pk-layer-note{
   margin-top: 3px; font-size: 10px; font-style: italic; color: #64748b;
 }
+/* WHICH TOPIC A PAGE RUNS ON. Two states of one band, and they must not look
+   alike: the practice band is quiet (this is a rehearsal, on purpose), the
+   handover band is the loudest non-title thing on its page (the topic just
+   changed, and a student who misses that writes about the wrong thing). */
+.pk-root .pk-topicband--practice{
+  border: 1px dashed color-mix(in srgb, var(--pk-ink, #0f172a) 30%, transparent);
+  color: color-mix(in srgb, var(--pk-ink, #0f172a) 74%, var(--pk-paper, #fff));
+}
+.pk-root .pk-topicband--handover{
+  background: var(--pk-ink, #0f172a);
+  color: var(--pk-paper, #fff);
+}
+
+/* A CARD WITH A JOB. Ruled rows, not cards: this block sits on a page that
+   already carries the evidence deck's own cards, and a second card treatment
+   here would compete with them for the same eye. */
+.pk-root .pk-cardjob{ border-top: 1px solid var(--pk-rule, #cbd5e1); }
+.pk-root .pk-cardjob:first-child{ border-top: 0; }
+.pk-root .pk-cardjob-id{
+  background: color-mix(in srgb, var(--pk-ink, #0f172a) 8%, var(--pk-paper, #fff));
+  color: color-mix(in srgb, var(--pk-ink, #0f172a) 82%, var(--pk-paper, #fff));
+  letter-spacing: .5px;
+}
+.pk-root .pk-cardjob-name{ color: color-mix(in srgb, var(--pk-ink, #0f172a) 62%, var(--pk-paper, #fff)); }
+.pk-root .pk-cardjob-instruction{ color: color-mix(in srgb, var(--pk-ink, #0f172a) 78%, var(--pk-paper, #fff)); }
+
+/* THE PASS CONDITION. Upright, not italic, and rule-separated from the note
+   above it — the note is an aside about the model, this is a test the student
+   runs on their own sentence, and the two must not read as one voice. */
+.pk-root .pk-layer-passes{
+  margin-top: 4px; padding-top: 3px; font-size: 10px; line-height: 1.35;
+  border-top: 1px dotted color-mix(in srgb, var(--pk-ink, #0f172a) 22%, transparent);
+  color: color-mix(in srgb, var(--pk-ink, #0f172a) 76%, var(--pk-paper, #fff));
+}
+.pk-root .pk-layer-passes-label{
+  font-size: 8.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+  color: color-mix(in srgb, var(--pk-ink, #0f172a) 52%, var(--pk-paper, #fff));
+}
 .pk-root .pk-layer--claim{ --layer-line: var(--layer-claim); --layer-fill: var(--layer-claim-soft); }
 .pk-root .pk-layer--claim .pk-layer-initial,
 .pk-root .pk-layer--claim .pk-layer-name{ color: #1e3a8a; }
@@ -630,6 +718,31 @@ export const HOUSE_DESIGN_CSS = `
   background: var(--h-red); --pk-fill: var(--h-red);
 }
 
+/* THE COACHING LINES — what to put in the box, and the wrong move made here.
+   Student-facing (see promptSchema), so they must NOT read as answer-key ink:
+   the key is red marker on a filled field, and these are quiet notes on paper
+   just above it.
+
+   Ink only, no fills. A tinted row would sit on top of the prompt's own side
+   tint — two washes stacked — and every filled chip is another element the
+   contrast pass has to rescue. Instead the pair is separated by a hairline
+   rail and by the tag colour alone, and both tags stay legible in greyscale
+   because they differ from the paper by LIGHTNESS, not only by hue. */
+.pk-root .pk-coach{
+  border-left: 2px solid color-mix(in srgb, var(--pk-ink, #0f172a) 18%, transparent);
+  padding-left: 8px;
+}
+.pk-root .pk-coach-row{
+  color: color-mix(in srgb, var(--pk-ink, #0f172a) 78%, var(--pk-paper, #fff));
+}
+.pk-root .pk-coach-tag{
+  font-size: 9px;
+  letter-spacing: 1.1px;
+  margin-right: 2px;
+}
+.pk-root .pk-coach-row--do .pk-coach-tag{ color: var(--h-green-ink); }
+.pk-root .pk-coach-row--dont .pk-coach-tag{ color: var(--h-red-ink); }
+
 /* The thing that matters most is the gold card; the elite read is violet —
    his own tier colour for the harder register. They must not look alike. */
 .pk-root .pk-key{
@@ -655,6 +768,101 @@ export const HOUSE_DESIGN_CSS = `
   background: var(--h-indigo-soft); border: 1px solid #c7d2fe;
   border-left: 5px solid var(--h-indigo);
 }
+
+/* ── FIGURES ────────────────────────────────────────────────────────────────
+   Every figure reads --pk-fig-on / --pk-fig-off / --pk-fig-line and nothing
+   else, so a register redefines three tokens and the whole set redraws in its
+   own ink. Filled marks also carry a BORDER, not just a fill: on a photocopier
+   a mid-tone fill and its background converge, and the outline is what keeps a
+   filled box distinguishable from an empty one. */
+.pk-root{
+  --pk-fig-on: var(--pk-accent, #2563eb);
+  --pk-fig-off: color-mix(in srgb, var(--pk-ink, #0f172a) 12%, var(--pk-paper, #fff));
+  --pk-fig-line: color-mix(in srgb, var(--pk-ink, #0f172a) 34%, var(--pk-paper, #fff));
+}
+.pk-root .pk-fig-caption{ color: color-mix(in srgb, var(--pk-ink, #0f172a) 80%, var(--pk-paper, #fff)); }
+.pk-root .pk-fig-exact{ color: color-mix(in srgb, var(--pk-ink, #0f172a) 66%, var(--pk-paper, #fff)); }
+.pk-root .pk-fig-source{ color: color-mix(in srgb, var(--pk-ink, #0f172a) 55%, var(--pk-paper, #fff)); letter-spacing: .03em; }
+
+/* unit chart */
+.pk-root .pk-unitchart{ display: flex; flex-direction: column; gap: 7px; }
+.pk-root .pk-unitrow{ display: flex; align-items: center; gap: 10px; }
+.pk-root .pk-unitgrid{
+  display: grid; grid-template-columns: repeat(25, 1fr); gap: 1.5px; flex: 1 1 auto; min-width: 0;
+}
+.pk-root .pk-unit{ aspect-ratio: 1; border-radius: 1px; }
+.pk-root .pk-unit--off{ background: var(--pk-fig-off); }
+.pk-root .pk-unit--on{ background: var(--pk-fig-on); border: .5px solid var(--pk-fig-line); }
+/* The earlier series is hollow rather than a second hue — one colour, two
+   states, so the pair still reads when the page is photocopied. */
+.pk-root .pk-unit--then{ background: transparent; border: 1px solid var(--pk-fig-on); }
+.pk-root .pk-unitmeta{ display: flex; flex-direction: column; align-items: flex-end; flex: none; min-width: 62px; }
+.pk-root .pk-unitnum{ font-size: 15px; font-weight: 800; line-height: 1; letter-spacing: -.03em; }
+.pk-root .pk-unitof{ font-size: 9px; font-weight: 600; opacity: .55; }
+.pk-root .pk-unitlabel{ font-size: 9px; text-align: right; line-height: 1.25; color: color-mix(in srgb, var(--pk-ink, #0f172a) 62%, var(--pk-paper, #fff)); }
+
+/* process flow — the numbered stages along one line */
+.pk-root .pk-flowline{
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-wrap: wrap; align-items: stretch; gap: 0;
+  border-top: 3px solid var(--pk-fig-on);
+}
+.pk-root .pk-flowstage{
+  flex: 1 1 26%; min-width: 26%;
+  display: flex; align-items: baseline; gap: 5px;
+  padding: 6px 8px 4px 0;
+}
+.pk-root .pk-flownum{
+  flex: none; font-size: 12px; font-weight: 800; line-height: 1;
+  color: var(--pk-fig-on);
+}
+.pk-root .pk-flowtext{ font-size: 10.5px; line-height: 1.3; }
+
+/* ratio — N small marks, an equals, one big one */
+.pk-root .pk-ratio{ display: flex; align-items: center; gap: 12px; }
+.pk-root .pk-ratio-side{ flex: 1 1 0; display: flex; flex-direction: column; gap: 5px; align-items: center; }
+.pk-root .pk-ratio-marks{ display: flex; flex-wrap: wrap; gap: 3px; justify-content: center; align-items: flex-end; min-height: 26px; }
+.pk-root .pk-ratio-mark{ background: var(--pk-fig-on); border: .5px solid var(--pk-fig-line); border-radius: 1px; }
+.pk-root .pk-ratio-mark--small{ width: 8px; height: 12px; }
+.pk-root .pk-ratio-mark--big{ width: 30px; height: 26px; }
+.pk-root .pk-ratio-eq{ font-size: 17px; font-weight: 800; opacity: .5; flex: none; }
+.pk-root .pk-ratio-label{ font-size: 10px; text-align: center; line-height: 1.3; margin: 0; }
+
+/* balance — brings, the subject, costs */
+.pk-root .pk-balance{ display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; }
+.pk-root .pk-balance-col{ display: flex; flex-direction: column; gap: 4px; }
+.pk-root .pk-balance-head{ padding-top: 3px; border-top: 2px solid var(--pk-fig-line); }
+.pk-root .pk-balance-col--brings .pk-balance-head{ border-top-color: var(--pk-fig-on); }
+.pk-root .pk-balance-item{ display: flex; flex-direction: column; }
+.pk-root .pk-balance-item-head{ font-size: 10px; font-weight: 700; line-height: 1.25; }
+.pk-root .pk-balance-item-detail{ font-size: 9px; line-height: 1.25; color: color-mix(in srgb, var(--pk-ink, #0f172a) 62%, var(--pk-paper, #fff)); }
+.pk-root .pk-balance-subject{
+  flex: none; max-width: 84px; text-align: center; font-size: 10px; font-weight: 800; line-height: 1.2;
+  border: 1.5px solid var(--pk-ink, #0f172a); border-radius: 4px; padding: 7px 6px;
+}
+
+/* THE EXIT BALLOT. A ruled form, not a card: it is the one block on the pack a
+   student fills in while someone else watches, and a form is the shape people
+   already know how to complete. Boxes are square and open — a filled tick-box
+   invites ticking without reading. */
+.pk-root .pk-ballot table{ font-size: 11px; }
+.pk-root .pk-ballot-h{
+  background: color-mix(in srgb, var(--pk-ink, #0f172a) 6%, var(--pk-paper, #fff));
+  color: color-mix(in srgb, var(--pk-ink, #0f172a) 62%, var(--pk-paper, #fff));
+  border-bottom: 1px solid var(--pk-rule, #cbd5e1);
+}
+.pk-root .pk-ballot-row{ border-bottom: 1px solid var(--pk-rule, #cbd5e1); }
+.pk-root .pk-ballot-row:last-child{ border-bottom: 0; }
+.pk-root .pk-ballot-test{ color: color-mix(in srgb, var(--pk-ink, #0f172a) 62%, var(--pk-paper, #fff)); }
+.pk-root .pk-ballot-box{ border: 1.5px solid color-mix(in srgb, var(--pk-ink, #0f172a) 55%, var(--pk-paper, #fff)); background: var(--pk-paper, #fff); }
+.pk-root .pk-ballot-move{ border: 1px solid var(--pk-rule, #cbd5e1); }
+
+/* WHY THIS PAGE — the student's reason to care. Ink on paper with a rail, not
+   a filled card: it sits directly under the instruction banner, and two tinted
+   blocks stacked is how a page stops having a first thing to read. */
+.pk-root .pk-why{ border-left-color: var(--pk-rule, #cbd5e1); }
+.pk-root .pk-why-label{ color: color-mix(in srgb, var(--pk-ink, #0f172a) 55%, var(--pk-paper, #fff)); }
+.pk-root .pk-why-text{ color: color-mix(in srgb, var(--pk-ink, #0f172a) 78%, var(--pk-paper, #fff)); }
 .pk-root .pk-fast-label{ color: var(--h-indigo-ink); }
 
 /* Reference furniture: the amber note strip, the cyan check, the slate card. */
@@ -1150,9 +1358,39 @@ export const HOUSE_NOVICE_CSS = `
   font-size: 11px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase;
   font-family: var(--pk-mono), monospace;
 }
+/* THE GLYPH AND ITS HALO.
+   The rings are PSEUDO-ELEMENTS, absolutely centred on the glyph's box. Three
+   things follow from that, and all three are the reason it is built this way:
+   they are out of flow, so they cost this page no height and cannot push a
+   title page off the paper; they are centred on the glyph by construction, so
+   they stay put however the blocks above them reflow; and they are sized in em
+   units off the 70px glyph, so they scale with it if the fit pass shrinks the
+   column.
+
+   The drop shadow moved onto the inner span. Left on the parent it applied to
+   the rings too, and the halo came back wearing the glyph's hard black offset,
+   which is three heavy objects where the design calls for one. */
 .pk-root .pk-cvr-hero{
+  position: relative;
   font-size: 70px; line-height: 1; margin-bottom: 12px;
+}
+.pk-root .pk-cvr-hero > span{
+  position: relative; z-index: 1;
   filter: drop-shadow(4px 4px 0 #000);
+}
+.pk-root .pk-cvr-hero::before,
+.pk-root .pk-cvr-hero::after{
+  content: ""; position: absolute; left: 50%; top: 50%;
+  border-radius: 50%; pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+.pk-root .pk-cvr-hero::before{
+  width: 1.44em; height: 1.44em;
+  border: 3px solid color-mix(in srgb, var(--n-accent) 30%, transparent);
+}
+.pk-root .pk-cvr-hero::after{
+  width: 1.94em; height: 1.94em;
+  border: 2px dashed color-mix(in srgb, var(--n-accent) 22%, transparent);
 }
 
 .pk-root .pk-cover--novice .pk-cover-title{
@@ -1402,3 +1640,200 @@ export function houseFloor(m: HouseMetrics): HouseFailure[] {
 
   return fails;
 }
+
+/**
+ * THE JV OVERLAY — the third register.
+ *
+ * Layered on HOUSE_DESIGN_CSS the way HOUSE_NOVICE_CSS and HOUSE_ELITE_CSS are,
+ * and mutually exclusive with both: all three disagree about ink, so exactly one
+ * loads (see `usesJvHouse`).
+ *
+ * THE ONE RULE, restated here because every selector below follows from it:
+ * colour is reserved for argument structure. Everything that is not a layer of
+ * an argument is ink, rule or paper. Two things fall out of that. Colour means
+ * one thing, so a student learns "the violet one is the warrant" once and then
+ * reads it everywhere. And there is almost nothing left for `useMonoSafeText`
+ * to repair, because the register has no filled chips to put text on.
+ *
+ * ── WHAT WAS MEASURED, AND WHAT IT CHANGED ──────────────────────────────────
+ * The first version of this register was stress-tested against six real pages
+ * from the founder's own Public Forum Lesson 1, rendered at true A4 and Letter
+ * geometry. It never overflowed. It failed the other way: the main column ran
+ * 24–123mm short and all of it pooled as dead space under the last block, while
+ * his own sheets put 67.8% of the column into gaps — and his build page 93.1% —
+ * because that space is where the student writes. Three fixes followed, and all
+ * three are below rather than in a page template, because a page-level fix
+ * would have to be repeated on every page a generator ever writes.
+ */
+export const HOUSE_JV_CSS = `
+/* ── Ascent JV standard (lib/house-design.ts) ──────────────────────────────── */
+.pk-root{
+  --jv-ink: #14171a;
+  --jv-ink-2: #5a6169;
+  /* Label grey. The audit measured the first value (#8a9099) at 3.13:1 on
+     paper, which fails WCAG AA for normal text — and it was carrying 6.5pt
+     labels on four different components. Darkened until it clears 4.5:1. */
+  --jv-ink-3: #6a7175;
+  --jv-rule: #d9dbd6;
+  --jv-paper: #fcfcfa;
+
+  --pk-title: 23px;
+  --pk-lead: 12.5px;
+  --pk-text: 12px;
+  --pk-label: 10px;
+}
+
+/* Flat, like the elite register, and for the same reason: depth is a novice
+   navigation aid and reads as a workbook to anyone older. */
+.pk-root .pk-box,
+.pk-root .pk-card,
+.pk-root .pk-prompt,
+.pk-root .pk-chain{
+  box-shadow: none;
+  border-radius: 3px;
+  border: 1px solid var(--jv-rule);
+  border-left-width: 1px;
+}
+
+/* Ink discipline, inherited from the elite register: body copy grey, headings
+   near-black, small labels lighter still. The gotcha recorded in the house
+   notes applies here too — this is text on PAPER. Anything sitting on a filled
+   background keeps the fill's own foreground. */
+.pk-root .pk-prompt-label,
+.pk-root .pk-chain-row,
+.pk-root .pk-coach-row{ color: var(--jv-ink-2); }
+.pk-root .pk-section-label{ color: var(--jv-ink-3); }
+
+/* Side tints are removed, not recoloured. A Pro/Con wash is a second colour
+   system competing with the argument code for the same page, and the side is
+   already carried by the chip and the rail. */
+.pk-root .pk-prompt--pro,
+.pk-root .pk-prompt--con,
+.pk-root .pk-prompt--neutral{
+  background: var(--jv-paper);
+  border-left: 2px solid var(--jv-ink);
+}
+.pk-root .pk-prompt--pro .pk-prompt-side{ background: var(--jv-ink); --pk-fill: var(--jv-ink); }
+.pk-root .pk-prompt--con .pk-prompt-side{ background: var(--jv-ink-2); --pk-fill: var(--jv-ink-2); }
+
+/* ── FIX 1 · ELASTIC WRITING SURFACES ──────────────────────────────────────
+   Slack goes to the student, not to the bottom of the sheet. Only surfaces the
+   student writes on grow: the first version let any worked-example block
+   absorb it, and on the clash page 108mm inflated the two PRINTED MODEL CASES
+   while the student's own boxes stayed at two lines. The page filled and the
+   space went to the wrong audience. */
+   ── WHY THE ELASTIC HALF IS NOT WIRED YET ────────────────────────────────
+   Growing writing areas into the leftover space needs .pk-fit to be a flex
+   column. It cannot be, yet: .pk-fit is the element the fit pass MEASURES —
+   it compares the column's natural height against the sheet and zooms it down
+   when it overruns (see the fit effect in PrintView). A flex column stretched
+   to its container is always exactly as tall as the container, so overflow
+   would stop being detectable and the is-overfull report would go quiet for
+   novice and elite as well as JV.
+   So this register ships the half that is safe — the caps, the pitch, and the
+   sizing below — and the elastic half waits on a fit pass that measures
+   content rather than the box it sits in. That is a change to shared
+   machinery, and it should not ride in on a new register.
+
+   ── FIX 2 · A BOX SIZE IS AN INSTRUCTION ──────────────────────────────────
+   Unbounded growth swung as far wrong as none: 18 ruled lines appeared under a
+   task whose whole instruction is "one question", and a ten-line box told a
+   student to write an essay into a sentence completion. So every writing
+   surface is sized to the answer it wants.
+   The renderer already picks a size from the expected answer's length
+   (write-area-sm|md|lg in WriteArea) — which is exactly the right signal, so
+   this maps caps onto the classes it already emits rather than inventing new
+   ones. Slack that survives the caps is NOT absorbed: it is under-specified
+   content, and inflating boxes to swallow it would hide that from the author
+   and from the density floor in lib/checklist.ts. */
+.pk-root .write-area{ min-height: 11mm; }
+.pk-root .write-area-sm{ min-height: 9mm; max-height: 14mm; }
+.pk-root .write-area-md{ min-height: 14mm; max-height: 24mm; }
+.pk-root .write-area-lg{ min-height: 24mm; max-height: 46mm; }
+
+/* ── FIX 3 · RULED PITCH ───────────────────────────────────────────────────
+   The first version ruled at 5.6mm. College-ruled paper is 7.1mm and
+   wide-ruled 8.7mm, so it was narrower than either — a fifteen-year-old cannot
+   put a sentence between those lines. */
+.pk-root .write-area{
+  background-image: repeating-linear-gradient(
+    transparent, transparent 6.8mm, var(--jv-rule) 6.8mm, var(--jv-rule) 7.05mm);
+  border: 1px solid var(--jv-rule);
+  border-left: 2px solid var(--jv-ink);
+  border-radius: 0;
+}
+
+/* ── THE RAIL ──────────────────────────────────────────────────────────────
+   The single biggest visual difference between our sheets and the founder's,
+   and it is structural rather than decorative: his pages are TWO columns. A
+   fixed right rail carries why the page exists and the coach's note; the main
+   column carries the whole task sequence. Because the rail never moves, a
+   student scanning for the task learns to ignore it, and a student who is
+   stuck knows exactly where to look — which is the entire argument for a fixed
+   position over a prettier flowing one.
+
+   Done in CSS on the existing flat block list rather than by restructuring the
+   renderer: the blocks are already siblings, so a grid can place them. Every
+   other register ignores pk-page--jv and keeps its single column.
+
+   align-content: start is load-bearing. The fit pass measures .pk-fit and
+   scales it when it overruns; a grid that STRETCHED to its container would
+   always report exactly the container's height and silence overflow detection
+   for every register. Starting the content means the natural height is still
+   the real one. (This is the same trap that stopped the writing areas becoming
+   elastic — see FIX 1 above.) */
+.pk-root .pk-page--jv .pk-fit{
+  display: grid;
+  grid-template-columns: 1fr 44mm;
+  column-gap: 6mm;
+  align-content: start;
+}
+/* Everything is main column by default; only the rail dwellers move across. */
+.pk-root .pk-page--jv .pk-fit > *{ grid-column: 1; }
+.pk-root .pk-page--jv .pk-fit > .pk-masthead,
+.pk-root .pk-page--jv .pk-fit > .print-footer{ grid-column: 1 / -1; }
+.pk-root .pk-page--jv .pk-fit > .pk-why{
+  grid-column: 2;
+  grid-row: span 6;
+  border-left: 1px solid var(--jv-rule);
+  border-top: 0; border-right: 0; border-bottom: 0;
+  padding-left: 3mm;
+  margin-bottom: 0;
+}
+
+/* Figures in the JV register are INK, like everything else that is not an
+   argument layer. This is the rule the whole register rests on, and a figure is
+   exactly where it would be easiest to break: a pictogram in the lesson accent
+   would look better in isolation and would put a fifth colour on a page whose
+   student is being taught that colour means which layer of an argument. */
+.pk-root .pk-page--jv{
+  --pk-fig-on: var(--jv-ink);
+  --pk-fig-off: color-mix(in srgb, var(--jv-ink) 11%, var(--jv-paper));
+  --pk-fig-line: color-mix(in srgb, var(--jv-ink) 40%, var(--jv-paper));
+}
+
+/* The page code. Mono, small, and in the spot colour — the only place on a JV
+   sheet where the accent is allowed out, because a code is an index entry
+   rather than content. */
+.pk-root .pk-pagecode{
+  font-size: 9px; font-weight: 700; letter-spacing: .06em;
+  color: var(--pk-spot, #8a2b1f);
+}
+.pk-root .pk-page--jv .pk-title{
+  /* Sentence case, not the shouty all-caps of the novice register: his titles
+     are labels for the page, not slogans. */
+  text-transform: none;
+  letter-spacing: -.02em;
+}
+
+/* The masthead is ink, so the five-family band colour does not apply here. The
+   page family is carried by the kind label instead, which is a word and
+   survives a photocopier. */
+.pk-root .pk-masthead{ background: var(--jv-ink) !important; color: var(--jv-paper); }
+.pk-root .pk-badge{ background: transparent; border: 1px solid var(--jv-rule); color: var(--jv-ink-2); }
+
+/* No handwriting face, no rotation, no emoji — same subtraction as the elite
+   register, for the same audience reason. */
+.pk-root .pk-hand{ font-family: var(--pk-body) !important; }
+.pk-root [class*="rotate"]{ transform: none !important; }
+`;

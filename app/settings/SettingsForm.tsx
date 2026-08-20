@@ -56,7 +56,10 @@ export default function SettingsForm({
     name.trim() !== initialName.trim() ||
     prefs.subject !== initialPrefs.subject ||
     prefs.gradeBand !== initialPrefs.gradeBand ||
-    prefs.durationMin !== initialPrefs.durationMin;
+    prefs.durationMin !== initialPrefs.durationMin ||
+    prefs.defaultPriorKnowledge !== initialPrefs.defaultPriorKnowledge ||
+    prefs.defaultMisconceptions !== initialPrefs.defaultMisconceptions ||
+    prefs.defaultConstraints !== initialPrefs.defaultConstraints;
 
   async function save() {
     if (!dirty || saving) return;
@@ -200,6 +203,59 @@ export default function SettingsForm({
                 </option>
               ))}
             </select>
+          </label>
+        </div>
+      </section>
+
+      {/* ── Your classes ──
+          The memory a teacher was retyping into "Add teaching detail" on every
+          single build. Saved here, it seeds those same fields on the create
+          screen — still editable per lesson, never a silent override. */}
+      <section className="card mb-4 p-5">
+        <h2 className="mb-1 text-xs font-bold uppercase tracking-widest text-fg1">
+          Your classes
+        </h2>
+        <p className="mb-4 text-[12px] text-fg3">
+          What&apos;s generally true about the students you teach. Every new
+          lesson starts from this, and you can still change it per lesson.
+        </p>
+
+        <div className="flex flex-col gap-3.5">
+          <label className="block">
+            <span className="field-label">What they already know</span>
+            <textarea
+              className="field-textarea !min-h-14"
+              value={prefs.defaultPriorKnowledge}
+              onChange={(e) =>
+                setPrefs({ ...prefs, defaultPriorKnowledge: e.target.value })
+              }
+              maxLength={600}
+              placeholder="e.g. Can build a basic PEEL argument. New to rebuttal."
+            />
+          </label>
+          <label className="block">
+            <span className="field-label">Mistakes and misconceptions they tend to make</span>
+            <textarea
+              className="field-textarea !min-h-14"
+              value={prefs.defaultMisconceptions}
+              onChange={(e) =>
+                setPrefs({ ...prefs, defaultMisconceptions: e.target.value })
+              }
+              maxLength={600}
+              placeholder="e.g. They just say 'I disagree' instead of attacking the reasoning."
+            />
+          </label>
+          <label className="block">
+            <span className="field-label">Your room, generally</span>
+            <textarea
+              className="field-textarea !min-h-14"
+              value={prefs.defaultConstraints}
+              onChange={(e) =>
+                setPrefs({ ...prefs, defaultConstraints: e.target.value })
+              }
+              maxLength={600}
+              placeholder="e.g. 24 students, no printer, one shared screen."
+            />
           </label>
         </div>
       </section>

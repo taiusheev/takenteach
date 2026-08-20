@@ -5,6 +5,8 @@ import { LessonPack } from "@/lib/lesson-pack-schema";
 import { Subject } from "@/lib/subjects";
 import { requireBuilder } from "@/lib/api/guards";
 import { readBody, serverError } from "@/lib/api/request";
+import { getUser } from "@/lib/auth/store";
+import { parsePreferences } from "@/lib/auth/preferences";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +20,14 @@ const bodySchema = z.object({
     .trim()
     .min(1, "say what you want to teach in a sentence")
     .max(2000, "keep the idea under 2000 characters"),
+  /** Whatever the teacher already typed into "Add teaching detail" this time. */
+  known: z
+    .object({
+      priorKnowledge: z.string().max(2000).optional(),
+      misconceptions: z.string().max(2000).optional(),
+      constraints: z.string().max(2000).optional(),
+    })
+    .optional(),
 });
 
 /**
@@ -54,9 +64,19 @@ export async function POST(req: NextRequest) {
 
   const parsed = await readBody(req, bodySchema);
   if (!parsed.ok) return parsed.response;
-  const { idea } = parsed.data;
+  const { idea, known } = parsed.data;
   try {
-    const plan = await planLesson(idea);
+    // What's typed into this build's fields wins; a saved class default only
+    // fills in what wasn't. Both exist so the planner never asks about
+    // something the teacher already told it, either just now or on file.
+    const prefs = parsePreferences(
+      (await getUser(builder.session.userId))?.preferences
+    );
+    const plan = await planLesson(idea, {
+      priorKnowledge: known?.priorKnowledge || prefs.defaultPriorKnowledge,
+      misconceptions: known?.misconceptions || prefs.defaultMisconceptions,
+      constraints: known?.constraints || prefs.defaultConstraints,
+    });
     // The planner reliably infers the series but often leaves the code blank —
     // fill it with the next free code so the author isn't asked for it.
     if (!plan.lessonCode?.trim() && plan.series?.trim()) {

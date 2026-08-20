@@ -74,8 +74,15 @@ export async function consumeLeg(
          The consequence is that the budget is a floor, not a ceiling: a stage
          beginning one millisecond under budget runs to completion. That is why
          the route sets it well below maxDuration — the gap is the headroom for
-         the longest single stage. */
-      if (now() - startedAt > opts.budgetMs) break;
+         the longest single stage.
+
+         `holdLeg` is the exception, and it exists because "the stage has landed"
+         is not the same as "nothing else is already paid for". Stages issued
+         concurrently complete together and yield one after another, so a stop
+         between them discards a finished, billed result and the next leg buys
+         it again. A stage carrying finished siblings says so and the leg carries
+         on to flush them; the budget applies at the following boundary. */
+      if (!event.holdLeg && now() - startedAt > opts.budgetMs) break;
     }
   }
 

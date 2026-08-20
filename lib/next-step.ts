@@ -44,6 +44,8 @@ export interface NextStepInput {
   qa: ContentQa | null;
   /** true when the stored report was written against different content */
   qaStale: boolean;
+  /** One sentence naming what is unreviewed, from lib/qa-scope.ts. */
+  qaScopeNote?: string;
 }
 
 export function nextStep(input: NextStepInput): NextStep {
@@ -57,6 +59,7 @@ export function nextStep(input: NextStepInput): NextStep {
     checklist,
     qa,
     qaStale,
+    qaScopeNote,
   } = input;
 
   if (!canEdit) {
@@ -130,8 +133,14 @@ export function nextStep(input: NextStepInput): NextStep {
     return {
       tone: "work",
       headline: "Content QA is out of date",
+      /* Names WHAT is unreviewed, when the stored report knows. The old wording
+         said only that the report was stale, which left "re-read all thirteen
+         pages" as the sole way to discover it covered one — a ~26¢ review, and
+         the majority of everything spent after a build. Knowing that three
+         pages changed is what lets a teacher finish editing and pay once. */
       detail:
-        "The pack changed since it was last reviewed, so the report no longer describes this content. Re-run it before submitting.",
+        (qaScopeNote ? `${qaScopeNote} ` : "") +
+        "The stored report no longer describes this pack, so review it again before submitting.",
       tab: "quality",
     };
   }

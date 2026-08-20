@@ -7,6 +7,7 @@ import { RegenSection, regenerateSection, describeAiError } from "@/lib/ai";
 import { LessonPack } from "@/lib/lesson-pack-schema";
 import { runChecklistFor } from "@/lib/checklist";
 import { loadEditableMaterial } from "@/lib/api/guards";
+import { metered } from "@/lib/api/metered";
 import { badRequest, readBody, serverError } from "@/lib/api/request";
 
 export const dynamic = "force-dynamic";
@@ -78,28 +79,68 @@ export async function POST(
 
   const section: RegenSection =
     body.section === "activity" ? { activityIndex: body.activityIndex } : body.section;
-  const exemplar =
-    (await getBestExemplar(scope, 
-      material.subject,
-      {
-        skillFocus: content.skillFocus,
-        format: content.format,
-        gradeBand: content.gradeBand,
-        rigorLevel: content.rigorLevel,
-      },
-      material.id
-    ))?.content ?? null;
+
+  /**
+   * THE GROUNDING EXEMPLAR IS FOR WRITING, NOT FOR EDITING.
+   *
+   * It is a whole approved pack serialised into the system prompt — measured at
+   * roughly 11k tokens, and by far the largest thing any request here sends.
+   * Its job is to set a quality bar for prose being written from nothing: match
+   * this density, this texture, this rigor.
+   *
+   * A targeted edit is not that. "Simplify this page", "make the answers more
+   * specific", "cut the repetition" all act on a page that already exists and
+   * already met the bar when it was built — the instruction is the whole
+   * specification, and the exemplar contributes nothing an editor could use.
+   *
+   * It is also the most expensive place to send it. A build amortises the
+   * exemplar across a dozen calls that share one cached prefix; a section
+   * rewrite is a single call in a fresh process, so it pays a full cache WRITE
+   * at 2x and reads it back never. That is ~24k billed input tokens for context
+   * the model will not act on — and these actions are now one click each in the
+   * editor, so a teacher polishing a lesson fires them dozens of times.
+   *
+   * So: a rebuild from scratch (no instruction) still gets the exemplar,
+   * because that IS writing. Everything the AI menu sends — improve, simplify,
+   * expand, shorten, a custom note — does not.
+   */
+  const isTargetedEdit = body.instruction.trim().length > 0;
+  const exemplar = isTargetedEdit
+    ? null
+    : (await getBestExemplar(
+        scope,
+        material.subject,
+        {
+          skillFocus: content.skillFocus,
+          format: content.format,
+          gradeBand: content.gradeBand,
+          rigorLevel: content.rigorLevel,
+        },
+        material.id
+      ))?.content ?? null;
+  /* Gathered BEFORE the meter starts. These are three database queries, not
+     model calls — inside the metered block they would inflate the recorded
+     latency of the AI operation with time no model spent. */
+  const classroomEvidence = signalForPrompt(
+    computeTeachingSignal(
+      await listRounds(scope),
+      await listAllSubmissions(scope),
+      await listMaterials(scope)
+    ),
+    content.skillFocus ?? ""
+  );
   try {
-    const pack = await regenerateSection(
-      material.subject,
-      material.content as LessonPack,
-      section,
-      body.instruction,
-      signalForPrompt(
-        computeTeachingSignal(await listRounds(scope), await listAllSubmissions(scope), await listMaterials(scope)),
-        (material.content as LessonPack).skillFocus ?? ""
-      ),
-      exemplar
+    const pack = await metered(
+      { scope, materialId: material.id, operation: `section:${body.section}` },
+      () =>
+        regenerateSection(
+          material.subject,
+          material.content as LessonPack,
+          section,
+          body.instruction,
+          classroomEvidence,
+          exemplar
+        )
     );
     // snapshot the state this call is about to overwrite
     await snapshotAndUpdate(material.id, "section regenerated", role, material.title, pack);

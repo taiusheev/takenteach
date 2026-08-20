@@ -31,7 +31,7 @@ export default function NewMaterialButton({
             : "border border-inkline bg-surface-alt text-fg3"
         }`}
       >
-        New lesson pack
+        New lesson
       </span>
     );
   }
@@ -47,7 +47,7 @@ export default function NewMaterialButton({
           strokeLinecap="round"
         />
       </svg>
-      New lesson pack
+      New lesson
     </Link>
   );
 }

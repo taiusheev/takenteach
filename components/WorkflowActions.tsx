@@ -14,10 +14,23 @@ export default function WorkflowActions({
   materialId,
   subject,
   transitions,
+  blockedReason,
 }: {
   materialId: number;
   subject: Subject;
   transitions: Transition[];
+  /**
+   * Why submitting would be refused right now, if it would be.
+   *
+   * The page already knows: `nextStep` mirrors the review gate exactly, so
+   * whenever it reports work outstanding, the transition route is going to
+   * answer 422. Offering "Submit for review" as the most prominent button on
+   * the screen in that state — which is what happened, in brand gradient, next
+   * to the words "11 quality checks failing" — is a dead end dressed as the
+   * primary action. The 422 handler below is good and stays; this is about not
+   * inviting the click in the first place.
+   */
+  blockedReason?: string;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -72,18 +85,31 @@ export default function WorkflowActions({
 
   return (
     <div className="flex flex-col items-end gap-2">
-      <div className="flex flex-wrap gap-2">
-        {transitions.map((t) => (
-          <button
-            key={t.action}
-            onClick={() => run(t)}
-            disabled={busy}
-            className={`btn ${style(t.action)} disabled:opacity-40`}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-2">
+        {transitions.map((t) => {
+          /* Only the forward move out of draft is gated this way. Send-back and
+             unpublish are always allowed, and an approval is the reviewer's own
+             judgement rather than something this page can pre-empt. */
+          const blocked = t.action === "submit" && !!blockedReason;
+          return (
+            <button
+              key={t.action}
+              onClick={() => (blocked ? undefined : run(t))}
+              disabled={busy || blocked}
+              aria-disabled={blocked || undefined}
+              title={blocked ? blockedReason : undefined}
+              className={`btn ${blocked ? "btn-secondary" : style(t.action)} disabled:opacity-40`}
+            >
+              {t.label}
+            </button>
+          );
+        })}
       </div>
+      {blockedReason && transitions.some((t) => t.action === "submit") && (
+        <p className="max-w-xs text-right text-[11.5px] leading-snug text-fg3">
+          {blockedReason} — review opens once that is cleared.
+        </p>
+      )}
       {error && (
         <div className="max-w-md rounded-lg border border-danger/40 bg-danger/10 p-3 text-right">
           <p className="text-xs font-semibold text-danger">{error}</p>

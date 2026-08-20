@@ -215,16 +215,33 @@ async function createDriver(): Promise<Driver> {
 
   if (!url) {
     /* No connection string: PGlite, in-process. This is the test path and a
-       zero-setup local dev path. It is NOT a production fallback — a missing
-       DATABASE_URL in production would otherwise start the app against an
-       empty in-memory database and look like every lesson had vanished. */
-    if (process.env.NODE_ENV === "production") {
+       zero-setup local dev path.
+       ── WHAT THE PRODUCTION GUARD IS ACTUALLY FOR ──────────────────────────
+       A DEPLOYED app with no DATABASE_URL would start against an empty
+       in-memory database and look exactly as though every lesson had vanished.
+       That is the disaster worth refusing to boot over.
+       It is NOT the same thing as running the production build on your own
+       machine against a PGlite DIRECTORY, which is what docs/RUNNING.md tells
+       people to do and what `scripts\ascent.bat` runs — a real, persistent
+       database that happens to live in a folder. The guard did not distinguish
+       them, so the documented "leave it running all day" launcher could not
+       start at all after the Postgres port: `npm start` threw on the first
+       query every time.
+       So the test is now the one that matches the danger. An explicit
+       PGLITE_PATH pointing at a real directory is a deliberate choice of a
+       persistent local store and is allowed; `memory://` (or nothing at all)
+       in production is still refused, because that is the throwaway case. */
+    const pglitePath = process.env.PGLITE_PATH;
+    const persistent = !!pglitePath && pglitePath !== "memory://";
+    if (process.env.NODE_ENV === "production" && !persistent) {
       throw new Error(
         "DATABASE_URL is not set. Refusing to start against a throwaway " +
-          "in-memory database in production — see .env.example."
+          "in-memory database in production. Set DATABASE_URL, or set " +
+          "PGLITE_PATH to a directory to run against a persistent local " +
+          "database — see .env.example."
       );
     }
-    return pgliteDriver(process.env.PGLITE_PATH ?? "memory://");
+    return pgliteDriver(pglitePath ?? "memory://");
   }
 
   const { Pool, types } = await import("pg");

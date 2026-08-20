@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { ChecklistResult } from "@/lib/checklist";
 import { AnyContent, contentTypeDef } from "@/lib/content-types";
 import { ClassPlan } from "@/lib/class-plan-schema";
@@ -9,11 +9,14 @@ import { VocabSet } from "@/lib/vocab-set-schema";
 import { JudgeBallot } from "@/lib/judge-ballot-schema";
 import { SUBJECT_DEFS, Subject } from "@/lib/subjects";
 import ChecklistPanel from "./ChecklistPanel";
+import SaveStatus from "@/components/build/SaveStatus";
+import { useAutosave } from "@/components/build/useAutosave";
 
 /**
  * Builder for the lighter content types (Class Plan, Vocabulary Set, Judge
- * Ballot). Same contract as the Lesson Pack builder — autosave, live checklist
- * in the right rail — but each type renders its own field set.
+ * Ballot). Same contract as the Lesson Pack builder — autosave that survives
+ * navigation, live checklist in the right rail — but each type renders its own
+ * field set.
  */
 export default function SimpleBuilder({
   materialId,
@@ -21,61 +24,36 @@ export default function SimpleBuilder({
   subject,
   initialTitle,
   initialContent,
+  initialChecklist = null,
 }: {
   materialId: number;
   type: string;
   subject: Subject;
   initialTitle: string;
   initialContent: AnyContent;
+  initialChecklist?: ChecklistResult | null;
 }) {
   const def = contentTypeDef(type);
   const subj = SUBJECT_DEFS[subject];
   const [title, setTitle] = useState(initialTitle);
   const [content, setContent] = useState<AnyContent>(initialContent);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [saveError, setSaveError] = useState("");
-  const [checklist, setChecklist] = useState<ChecklistResult | null>(null);
-  const firstRender = useRef(true);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [checklist, setChecklist] = useState<ChecklistResult | null>(initialChecklist);
 
-  const save = useCallback(
-    async (nextTitle: string, nextContent: AnyContent) => {
-      setSaveState("saving");
-      try {
-        const res = await fetch(`/api/materials/${materialId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: nextTitle, content: nextContent }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          setSaveState("error");
-          setSaveError(data.error ?? "Save failed");
-          return;
-        }
-        setChecklist(data.checklist);
-        setSaveState("saved");
-      } catch {
-        setSaveState("error");
-        setSaveError("Network error — changes not saved");
-      }
+  const doc = useMemo(() => ({ title, content }), [title, content]);
+  const save = useAutosave({
+    value: doc,
+    save: async ({ title: t, content: c }, { keepalive }) => {
+      const res = await fetch(`/api/materials/${materialId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: t, content: c }),
+        keepalive,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Save failed");
+      if (!keepalive) setChecklist(data.checklist);
     },
-    [materialId]
-  );
-
-  useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false;
-      save(title, content);
-      return;
-    }
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => save(title, content), 700);
-    return () => {
-      if (timer.current) clearTimeout(timer.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, content]);
+  });
 
   // generic helpers over the untyped content bag
   const c = content as Record<string, unknown>;
@@ -99,7 +77,7 @@ export default function SimpleBuilder({
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8">
+    <div className="mx-auto max-w-6xl">
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <Link
           href={`/materials/${materialId}`}
@@ -115,15 +93,9 @@ export default function SimpleBuilder({
           placeholder="Material title"
         />
         <span className="rounded bg-inkmid px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-fg3">
-          {def.emoji} {def.label}
+          {def.label}
         </span>
-        <span
-          className={`text-xs font-bold uppercase tracking-widest ${
-            saveState === "error" ? "text-danger" : saveState === "saving" ? "text-warn" : "text-fg3"
-          }`}
-        >
-          {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? saveError : ""}
-        </span>
+        <SaveStatus save={save} />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
@@ -344,7 +316,7 @@ export default function SimpleBuilder({
             <ChecklistPanel result={checklist} />
           ) : (
             <div className="rounded-xl border border-inkline bg-inkcard p-4 text-xs text-fg3">
-              Checklist runs on first save…
+              Checklist runs on the next save…
             </div>
           )}
         </div>

@@ -1,13 +1,23 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
-import { logActivity, snapshotMaterial, updateMaterialContent } from "@/lib/db";
+import {
+  logActivity,
+  logAiUsage,
+  snapshotMaterial,
+  spentOnMaterial,
+  updateMaterialContent,
+} from "@/lib/db";
 import { generateLessonPack, generateSimpleContent, describeAiError } from "@/lib/ai";
 import { buildInputs } from "@/lib/overnight";
-import { BUDGET_MODE_IDS, setBudgetMode } from "@/lib/model-policy";
+import { BUDGET_MODE_IDS, budgetMode, setBudgetMode } from "@/lib/model-policy";
 import { LessonPack } from "@/lib/lesson-pack-schema";
 import { loadEditableMaterial } from "@/lib/api/guards";
-import { readBody } from "@/lib/api/request";
-import { withUsageMeter, describeUsage } from "@/lib/usage-meter";
+import { badRequest, readBody } from "@/lib/api/request";
+import {
+  withUsageMeter,
+  describeUsage,
+  usageBreakdown,
+} from "@/lib/usage-meter";
 import { consumeLeg } from "@/lib/build-leg";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +67,19 @@ export const maxDuration = 300;
  * changes only how many legs a build takes, never the result.
  */
 const LEG_BUDGET_MS = Number(process.env.BUILD_LEG_BUDGET_MS ?? 45_000);
+
+/**
+ * The most one lesson may ever cost, across every build leg and rebuild.
+ *
+ * Measured builds run $4.50–5.85 in Maximum mode and roughly a third of that
+ * in the Economy default, so $25 is far above any legitimate lesson — it is not
+ * a budget to plan against, it is the tripwire that stops a loop. A build that
+ * hits it keeps everything it has written and refuses to start another leg.
+ */
+const MATERIAL_BUDGET_USD = Number(process.env.MATERIAL_BUDGET_USD ?? 25);
+
+/** Ceiling for a single leg — one runaway stage cannot outrun the leg budget. */
+const LEG_BUDGET_USD = Number(process.env.BUILD_LEG_BUDGET_USD ?? 8);
 
 const bodySchema = z.object({
   /** "Regenerate all" — clear the pack and rebuild rather than resume. */
@@ -116,6 +139,22 @@ export async function POST(
   // run before any stage starts, so the estimate the founder just read on the
   // Build tab and the calls this build makes come from the same table.
   if (parsed.data.budgetMode) setBudgetMode(parsed.data.budgetMode);
+  // Read back rather than reusing the request field: the mode is a process
+  // default the body may or may not override, and the usage row must record
+  // what actually ran, not what was asked for.
+  const mode = budgetMode();
+
+  /* CUMULATIVE CEILING. A build is several requests, each metered separately,
+     so a per-run limit cannot see the total — the runaway this guards against
+     is a lesson that keeps resuming, each leg individually reasonable. Checked
+     once per leg, before any money is spent, against every operation this
+     lesson has ever paid for. */
+  const alreadySpent = await spentOnMaterial(scope, material.id);
+  if (alreadySpent >= MATERIAL_BUDGET_USD) {
+    return badRequest(
+      `This lesson has already used ${alreadySpent.toFixed(2)} of AI budget, which is past the ${MATERIAL_BUDGET_USD.toFixed(2)} per-lesson limit. Everything built so far is saved and editable. Raise MATERIAL_BUDGET_USD if this lesson genuinely needs more.`
+    );
+  }
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -172,7 +211,8 @@ export async function POST(
                   // the one not made, and a unit should look like one unit —
                   // the same rule class plans and word banks already follow.
                   inherit: inputs.design.inherit,
-                }
+                },
+                inputs.recentActivity
               )
             : generateSimpleContent(
                 material.type,
@@ -241,7 +281,38 @@ export async function POST(
                 "quick-build-usage",
                 describeUsage(totals)
               );
+              /* The queryable copy. The activity line above stays because a
+                 person reading one lesson's history wants a sentence; this is
+                 what makes "where did the month's budget go" a query rather
+                 than an afternoon of reading logs. */
+              await logAiUsage({
+                orgId: scope.orgId,
+                materialId: material.id,
+                operation: "build",
+                calls: totals.calls,
+                inputTokens: totals.input,
+                cacheWriteTokens: totals.cacheWrite,
+                cacheReadTokens: totals.cacheRead,
+                outputTokens: totals.output,
+                usd: totals.usd,
+                ms: totals.ms,
+                budgetMode: mode,
+                /* A leg stopped by the ceiling is not a success. Recording it
+                   as one would hide the most important thing about it. */
+                ok: !totals.stoppedOnBudget,
+                breakdown: usageBreakdown(totals),
+              });
             }
+          },
+          {
+            /* Whichever is tighter: the per-leg ceiling, or what remains of
+               this lesson's total allowance. The floor keeps a nearly-exhausted
+               lesson from being given a budget so small that a single legitimate
+               call trips it on arrival. */
+            budgetUsd: Math.min(
+              LEG_BUDGET_USD,
+              Math.max(0.5, MATERIAL_BUDGET_USD - alreadySpent)
+            ),
           }
         );
         if (finished) {

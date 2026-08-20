@@ -99,6 +99,15 @@ export interface Scope {
   userId: number;
   /** owner/admin/coach see private drafts in their org; a teacher sees own only */
   canSeeAllPrivate: boolean;
+  /**
+   * The organization's display name — for BRANDING ONLY, never for filtering.
+   *
+   * Optional so the ~130 existing queries and the tenancy tests are unaffected:
+   * nothing may key off a name when it has an id, and every query in this file
+   * still filters on `orgId`. It exists so a pack can print the school's
+   * masthead without the print page having to fetch the organization itself.
+   */
+  orgName?: string;
 }
 
 export interface ActivityRow {
@@ -146,7 +155,22 @@ const DEFAULT_KIT: StyleKitConfig = DEFAULT_KIT_CONFIG;
  */
 export async function createDefaultStyleKit(
   orgId: number,
-  name?: string
+  name?: string,
+  /**
+   * The organization's own name, which becomes the brand printed on the pack.
+   *
+   * ── WHY THIS PARAMETER EXISTS ────────────────────────────────────────────
+   * Every printed lesson carried "TAKENTEACH" in its footer and masthead,
+   * because the starting kit hard-coded it. That is the wrong name on the
+   * paper: the sheet a student is handed belongs to their school, and the tool
+   * that produced it is nobody's business — no school hands out worksheets
+   * branded with the name of the software that made them. It also reads as an
+   * advert on a document a teacher is putting their own credibility behind.
+   *
+   * So the kit is seeded from the organization at signup, and `brandFor()`
+   * below rescues the kits that were created before this existed.
+   */
+  orgName?: string
 ): Promise<number> {
   return insert(
     `INSERT INTO style_kits (org_id, name, config, locked_fields, is_default)
@@ -154,10 +178,28 @@ export async function createDefaultStyleKit(
     [
       orgId,
       name ?? "House Style",
-      JSON.stringify(DEFAULT_KIT),
+      JSON.stringify(brandedKit(DEFAULT_KIT, orgName)),
       JSON.stringify(["palette", "fonts", "rules"]),
     ]
   );
+}
+
+/** The starting kit, wearing the school's name instead of the product's. */
+export function brandedKit(
+  base: StyleKitConfig,
+  orgName?: string
+): StyleKitConfig {
+  const school = (orgName ?? "").trim();
+  if (!school) return base;
+  const brand = school.toUpperCase();
+  return {
+    ...base,
+    brand,
+    /* The year is deliberately dropped rather than guessed. "SPRING 2026"
+       was baked into the default and is wrong for most of the year and every
+       year after; a footer nobody edits should not state a false date. */
+    footerText: `${brand} · ${base.seriesLabel.toUpperCase()}`,
+  };
 }
 
 // ── Typed accessors ──────────────────────────────────────────────────────────
@@ -356,6 +398,24 @@ export async function getBestExemplar(
 }
 
 /**
+ * This teacher's own most recent lesson packs — for `recentActivityGuidance`
+ * (lib/analytics.ts). Scoped to `created_by`, not `org_id`: two teachers at
+ * the same school build differently, and averaging across them would recommend
+ * variety neither of them actually needs.
+ */
+export async function listOwnRecentLessonPacks(
+  scope: Scope,
+  excludeId: number,
+  limit = 5
+): Promise<MaterialRow[]> {
+  const rows = await all(
+    "SELECT * FROM materials WHERE org_id = ? AND created_by = ? AND type = 'lesson-pack' AND id != ? ORDER BY updated_at DESC LIMIT ?",
+    [scope.orgId, scope.userId, excludeId, limit]
+  );
+  return rows.map(parseMaterial);
+}
+
+/**
  * A material is created before the AI has named it, so its row title is a
  * placeholder ("Untitled full lesson pack") until someone renames it by hand —
  * and nobody does, so the library ends up full of Untitleds. Once the content
@@ -534,6 +594,140 @@ export async function logActivity(
     "INSERT INTO activity_log (material_id, role, action, detail) VALUES (?, ?, ?, ?)",
     [materialId, role, action, detail]
   );
+}
+
+/**
+ * Record what one metered AI operation cost.
+ *
+ * Deliberately never throws into the caller: this is bookkeeping, and a failed
+ * INSERT must not lose a lesson that has just been generated and paid for. The
+ * failure is logged and swallowed — the alternative is a build that succeeded,
+ * cost a dollar, and reports as an error because its accounting row would not
+ * write.
+ */
+export async function logAiUsage(input: {
+  orgId: number;
+  materialId?: number | null;
+  operation: string;
+  calls: number;
+  inputTokens: number;
+  cacheWriteTokens: number;
+  cacheReadTokens: number;
+  outputTokens: number;
+  usd: number;
+  ms: number;
+  budgetMode: string;
+  ok: boolean;
+  breakdown: string;
+}): Promise<void> {
+  try {
+    await run(
+      `INSERT INTO ai_usage
+         (org_id, material_id, operation, calls, input_tokens, cache_write_tokens,
+          cache_read_tokens, output_tokens, usd_micros, ms, budget_mode, ok, breakdown)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.orgId,
+        input.materialId ?? null,
+        input.operation,
+        input.calls,
+        input.inputTokens,
+        input.cacheWriteTokens,
+        input.cacheReadTokens,
+        input.outputTokens,
+        Math.round(input.usd * 1e6),
+        input.ms,
+        input.budgetMode,
+        input.ok,
+        input.breakdown,
+      ]
+    );
+  } catch (err) {
+    console.error("ai_usage insert failed (spend not recorded):", err);
+  }
+}
+
+/**
+ * This organization's model spend so far this calendar month, in dollars.
+ *
+ * The read side of the meter, and until now it had none: every dollar was
+ * written to `ai_usage` and nothing ever read it back, so the bill had no upper
+ * bound. `lib/spend-policy.ts` turns this number into a decision.
+ *
+ * Counts FAILED operations too (`ok` is not filtered). A build that died
+ * halfway still burned the tokens it burned, and a runaway is usually a loop of
+ * failures — excluding them would blind the guard to exactly the case it exists
+ * for.
+ *
+ * Calendar month, not a rolling window, because it has to match what a customer
+ * is billed for; "your allowance resets on the 1st" is a sentence a school
+ * finance office accepts and "in 12 days" is not.
+ */
+export async function orgSpendThisMonthUsd(orgId: number): Promise<number> {
+  /* `created_at` is TEXT in `YYYY-MM-DD HH24:MI:SS` UTC (see SQL_NOW), not a
+     timestamp column. So the bound is built as text and compared as text —
+     lexicographic order is chronological order in that format, which is the
+     whole reason it was chosen. Comparing the column against `date_trunc(...)`
+     would make Postgres cast every row and would break the moment a row was
+     written in any other shape. */
+  const rows = await all<{ micros: string | number | null }>(
+    `SELECT COALESCE(SUM(usd_micros), 0) AS micros
+       FROM ai_usage
+      WHERE org_id = $1
+        AND created_at >= to_char(date_trunc('month', now() AT TIME ZONE 'utc'),
+                                  'YYYY-MM-DD HH24:MI:SS')`,
+    [orgId]
+  );
+  // SUM over bigint comes back as a string on some drivers; Number() on a null
+  // would be 0 anyway, but COALESCE makes that explicit rather than incidental.
+  return Number(rows[0]?.micros ?? 0) / 1e6;
+}
+
+export interface AiUsageRow {
+  id: number;
+  material_id: number | null;
+  operation: string;
+  calls: number;
+  input_tokens: number;
+  cache_write_tokens: number;
+  cache_read_tokens: number;
+  output_tokens: number;
+  usd_micros: number;
+  ms: number;
+  budget_mode: string;
+  ok: boolean;
+  breakdown: string;
+  created_at: string;
+}
+
+/** This organization's AI spend, newest first. */
+export async function listAiUsage(
+  scope: Scope,
+  limit = 200
+): Promise<AiUsageRow[]> {
+  return all<AiUsageRow>(
+    `SELECT * FROM ai_usage WHERE org_id = ? ORDER BY id DESC LIMIT ?`,
+    [scope.orgId, limit]
+  );
+}
+
+/**
+ * What has already been spent on one lesson, in USD.
+ *
+ * A build is several requests, each with its own meter, so a per-run ceiling
+ * cannot see the total. This is the cumulative figure — the one that answers
+ * "this lesson has now cost eleven dollars and is still asking for more".
+ */
+export async function spentOnMaterial(
+  scope: Scope,
+  materialId: number
+): Promise<number> {
+  const row = await one<{ total: string | number | null }>(
+    `SELECT COALESCE(SUM(usd_micros), 0) AS total
+       FROM ai_usage WHERE org_id = ? AND material_id = ?`,
+    [scope.orgId, materialId]
+  );
+  return Number(row?.total ?? 0) / 1e6;
 }
 
 export async function listActivity(
@@ -1193,9 +1387,29 @@ export async function getKitForMaterial(
   styleKitId: number
 ): Promise<StyleKitRow | null> {
   const exact = await getStyleKit(scope, styleKitId);
-  if (exact) return exact;
-  const kits = await listStyleKits(scope);
-  return kits.find((k) => k.is_default === 1) ?? null;
+  const kit = exact ?? (await listStyleKits(scope)).find((k) => k.is_default === 1);
+  return kit ? rebrandUntouched(kit, scope.orgName) : null;
+}
+
+/**
+ * Put the school's name on a kit that still carries the product's.
+ *
+ * New organizations are seeded correctly (see createDefaultStyleKit), but every
+ * kit created before that shipped says "TAKENTEACH" on the footer of every
+ * printed page. Rather than a one-shot data migration — this project has no
+ * data-migration mechanism, only idempotent DDL — the substitution happens on
+ * read, and ONLY while the value is still untouched. The moment a teacher edits
+ * the brand, `brand !== DEFAULT_KIT.brand` and their choice is left alone
+ * forever after; this can never overwrite an edit.
+ */
+function rebrandUntouched(kit: StyleKitRow, orgName?: string): StyleKitRow {
+  const school = (orgName ?? "").trim();
+  if (!school) return kit;
+  const untouched =
+    kit.config.brand === DEFAULT_KIT.brand &&
+    kit.config.footerText === DEFAULT_KIT.footerText;
+  if (!untouched) return kit;
+  return { ...kit, config: brandedKit(kit.config, school) };
 }
 
 export async function createStyleKit(

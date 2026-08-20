@@ -16,6 +16,9 @@ export default function MakeSwitcher({
   prefillResolution = "",
   prefillGradeBand = "",
   prefillDurationMin,
+  prefillPriorKnowledge = "",
+  prefillMisconceptions = "",
+  prefillConstraints = "",
   initialMode = "lesson",
 }: {
   prefillSkillFocus?: string;
@@ -24,6 +27,10 @@ export default function MakeSwitcher({
   prefillResolution?: string;
   prefillGradeBand?: string;
   prefillDurationMin?: number;
+  /** this teacher's saved class defaults — see lib/auth/preferences.ts */
+  prefillPriorKnowledge?: string;
+  prefillMisconceptions?: string;
+  prefillConstraints?: string;
   initialMode?: "lesson" | "unit";
 }) {
   const [mode, setMode] = useState<"lesson" | "unit">(initialMode);
@@ -91,6 +98,9 @@ export default function MakeSwitcher({
           prefillResolution={prefillResolution}
           prefillGradeBand={prefillGradeBand}
           prefillDurationMin={prefillDurationMin}
+          prefillPriorKnowledge={prefillPriorKnowledge}
+          prefillMisconceptions={prefillMisconceptions}
+          prefillConstraints={prefillConstraints}
         />
       ) : (
         <UnitBuilder />

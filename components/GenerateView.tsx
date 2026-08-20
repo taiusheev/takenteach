@@ -7,7 +7,10 @@ import { packReadiness } from "@/lib/readiness";
 import type { RepairSummary, QaSummary } from "@/lib/ai";
 import { Subject, SUBJECT_DEFS } from "@/lib/subjects";
 import { contentTypeDef } from "@/lib/content-types";
-import BuildProgress, { type StageState } from "@/components/build/BuildProgress";
+import BuildProgress, {
+  type StageState,
+  type StageTiming,
+} from "@/components/build/BuildProgress";
 import {
   IconPencil,
   IconPlay,
@@ -33,6 +36,44 @@ const STAGES: { id: string; label: string }[] = [
   // where it is collected, not where the work happens.
   { id: "design", label: "Visual identity — one design system for every page" },
 ];
+
+/**
+ * WHO OWNS THE BUILD FOR THIS PACK, AND HOW MANY VIEWS ARE WATCHING IT.
+ *
+ * ── THE BUG THIS EXISTS TO KILL ──────────────────────────────────────────
+ * The build auto-starts on mount and aborts on unmount. Aborting on unmount is
+ * deliberate — it is what stops React 19's StrictMode remount from firing (and
+ * billing) the whole build twice. But StrictMode's cycle is mount → unmount →
+ * mount, so the abort landed on the run the remount was about to adopt, and the
+ * observed result was a build that never started at all: a teacher pressed
+ * "Build the full pack", waited 65 seconds for the outline, and was shown
+ * "Build stopped · 1/10" with nothing running.
+ *
+ * A ref could not fix it — StrictMode gives the remounted component fresh refs,
+ * which is what defeated the previous `autostarted` guard. So the bookkeeping
+ * lives at module scope, keyed by material, where a remount can find it:
+ *
+ *   mounted   how many live views this pack has. StrictMode's unmount takes it
+ *             to 0 and the immediate remount puts it back to 1, so the abort is
+ *             deferred one macrotask and then skipped. A real navigation away
+ *             leaves it at 0 and the abort fires as intended.
+ *   ctrl      the run entitled to write to the screen. Anything else is a
+ *             superseded run and its result is dropped rather than rendered.
+ */
+interface BuildOwner {
+  mounted: number;
+  ctrl: AbortController | null;
+}
+const buildOwners = new Map<number, BuildOwner>();
+
+function owner(materialId: number): BuildOwner {
+  let o = buildOwners.get(materialId);
+  if (!o) {
+    o = { mounted: 0, ctrl: null };
+    buildOwners.set(materialId, o);
+  }
+  return o;
+}
 
 /**
  * Real-time AI build: stages light up as the model works, and each section's
@@ -72,6 +113,12 @@ export default function GenerateView({
   const [usage, setUsage] = useState<string>("");
   const [cacheHit, setCacheHit] = useState<number | null>(null);
   const [stages, setStages] = useState<Record<string, StageState>>({});
+  /* When each stage started and finished. Recorded here rather than on the
+     server because it is a fact about THIS watch — a build resumed after lunch
+     did not take four hours, and saying so would be the kind of number that
+     teaches a teacher to distrust every other number on the screen. */
+  const [timings, setTimings] = useState<Record<string, StageTiming>>({});
+  const [startedAt, setStartedAt] = useState<number | null>(null);
   const [phase, setPhase] = useState<"idle" | "running" | "done" | "stopped" | "error">("idle");
   const [error, setError] = useState("");
   const [regenBusy, setRegenBusy] = useState<string | null>(null);
@@ -115,9 +162,12 @@ export default function GenerateView({
   async function start(fresh = false) {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    owner(materialId).ctrl = ctrl;
     setPhase("running");
     setError("");
     setStages({});
+    setTimings({});
+    setStartedAt(Date.now());
     try {
       /* Stage state is NOT reset between legs — the bar would jump back to zero
          every time the server handed back. Only `start` clears it, above. */
@@ -125,7 +175,7 @@ export default function GenerateView({
         const { complete, progressed } = await runLeg({
           fresh: fresh && leg === 0, // a rebuild wipes once, not on every leg
           resume: leg > 0,
-          signal: ctrl.signal,
+          controller: ctrl,
         });
         if (complete) break;
         if (ctrl.signal.aborted) break;
@@ -145,12 +195,23 @@ export default function GenerateView({
       }
       setPhase((p) => (p === "running" ? "done" : p));
     } catch (err) {
+      /* OWNERSHIP CHECK — the fix for a build that silently never started.
+         A superseded run must not report on a screen it no longer owns. Without
+         this, React 19's StrictMode remount produced exactly that: run A began,
+         the simulated unmount aborted it, run B took over — and then A's
+         rejection landed and wrote "Build stopped" over B's "running". The
+         teacher had just pressed Build, waited through a 65-second outline, and
+         was told the build had stopped. */
+      if (owner(materialId).ctrl !== ctrl) return;
       if (ctrl.signal.aborted) {
         setPhase("stopped");
       } else {
         setPhase("error");
         setError(err instanceof Error ? err.message : "Generation failed");
       }
+    } finally {
+      const o = owner(materialId);
+      if (o.ctrl === ctrl) o.ctrl = null;
     }
   }
 
@@ -163,13 +224,13 @@ export default function GenerateView({
   async function runLeg(opts: {
     fresh: boolean;
     resume: boolean;
-    signal: AbortSignal;
+    controller: AbortController;
   }): Promise<{ complete: boolean; progressed: boolean }> {
     const res = await fetch(`/api/materials/${materialId}/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fresh: opts.fresh, resume: opts.resume }),
-      signal: opts.signal,
+      signal: opts.controller.signal,
     });
     if (!res.ok || !res.body) {
       const data = await res.json().catch(() => ({}));
@@ -194,10 +255,23 @@ export default function GenerateView({
         } catch {
           continue; // skip a malformed/partial line rather than killing the live view
         }
+        /* Same ownership rule as the result handler: a superseded run's events
+           must not repaint a screen a newer run is driving, or the rail shows
+           two builds interleaved. */
+        if (owner(materialId).ctrl !== opts.controller) continue;
         if (event.type === "stage-start") {
           setStages((s) => ({ ...s, [event.stage]: "running" }));
+          setTimings((t) => ({ ...t, [event.stage]: { start: Date.now() } }));
         } else if (event.type === "stage-done") {
           setStages((s) => ({ ...s, [event.stage]: "done" }));
+          setTimings((t) => ({
+            ...t,
+            [event.stage]: {
+              // A resumed leg can finish a stage it never saw start.
+              start: t[event.stage]?.start ?? Date.now(),
+              end: Date.now(),
+            },
+          }));
           progressed = true;
           if (event.pack) setPack(event.pack);
           if (event.repair) setRepair(event.repair);
@@ -232,19 +306,35 @@ export default function GenerateView({
     abortRef.current?.abort();
   }
 
-  // Auto-start once on first visit if the pack is still empty. No ref guard:
-  // React 19 StrictMode remounts with fresh refs, which defeated the old
-  // `autostarted` ref and double-fired the whole (paid) build. Instead we abort
-  // the in-flight stream on unmount — the generate route checks req.signal and
-  // stops server-side — so the simulated remount cancels the first run and the
-  // live instance owns the authoritative one.
+  /**
+   * Auto-start on first visit, once, and survive the StrictMode remount.
+   *
+   * The registry above is what makes this safe: a second live view of the same
+   * pack attaches to the run already in flight instead of starting a rival one,
+   * and the abort is deferred by a macrotask so a remount can cancel it. See
+   * the note on `buildOwners`; this used to leave the build stopped before it
+   * had begun.
+   */
   useEffect(() => {
-    if (pack.activities.length > 0) return;
+    const o = owner(materialId);
+    o.mounted += 1;
     // Firing the streaming build is this effect's whole purpose; the
     // synchronous loading-state setState inside start() is intentional.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    start();
-    return () => abortRef.current?.abort();
+    if (pack.activities.length === 0 && !o.ctrl) start();
+
+    return () => {
+      o.mounted -= 1;
+      if (o.mounted > 0) return; // another view of this pack is still open
+      /* Deferred by one macrotask. StrictMode unmounts and remounts within the
+         same tick, so by the time this runs `mounted` is 1 again and the run
+         survives. A real navigation away leaves it at 0 and the abort fires,
+         which is what stops a closed tab from billing for a build nobody is
+         watching. */
+      setTimeout(() => {
+        if (owner(materialId).mounted === 0) abortRef.current?.abort();
+      }, 0);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -280,21 +370,32 @@ export default function GenerateView({
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
-      <div className="mb-6 flex flex-wrap items-center gap-3">
-        <Link
-          href={`/materials/${materialId}`}
-          onClick={confirmLeave}
-          className="text-sm font-bold text-fg3 hover:text-fg1 transition-colors"
-        >
-          ← Material
-        </Link>
-        <div className="min-w-0 flex-1">
-          <h1 className="font-display truncate text-[26px] text-fg1">{title}</h1>
-          <p className="text-xs text-fg3">
-            {def.label} · {pack.resolution || "no anchor"} · {pack.durationMin} min
-          </p>
+    <div className="mx-auto max-w-6xl">
+      {/* THE TITLE GETS ITS OWN ROW.
+          It used to share one flex line with the back link and up to four
+          action buttons, so on a 1280px screen the heading was squeezed into
+          366px and truncated mid-word — "L1 · BEYOND THE NUMBER: ATTACKING THE
+          WA…". The lesson's name is the one thing on this screen that says what
+          is being built, and it was the only element allowed to lose its
+          content to make room for buttons. It now wraps instead of truncating,
+          and the actions sit on their own line beneath. */}
+      <div className="mb-6">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <Link
+            href={`/materials/${materialId}`}
+            onClick={confirmLeave}
+            className="shrink-0 text-sm font-bold text-fg3 transition-colors hover:text-fg1"
+          >
+            ← Lesson
+          </Link>
+          <h1 className="min-w-0 text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg1">
+            {title}
+          </h1>
         </div>
+        <p className="mt-1 text-xs leading-relaxed text-fg3">
+          {def.label} · {pack.resolution || "no anchor"} · {pack.durationMin} min
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2.5">
         {running ? (
           <button onClick={stop} className="rounded-md border border-danger/50 px-4 py-2 text-sm font-bold text-danger hover:bg-danger/10 transition-colors">
             Stop — keeps what&apos;s built
@@ -327,7 +428,7 @@ export default function GenerateView({
             )}
             <Link href={`/materials/${materialId}/edit`} className="btn btn-secondary">
               <IconPencil size={15} />
-              Open in Builder
+              Edit the lesson
             </Link>
             <Link href={`/materials/${materialId}/print`} className="btn btn-secondary">
               <IconPrinter size={15} />
@@ -335,6 +436,7 @@ export default function GenerateView({
             </Link>
           </>
         )}
+        </div>
       </div>
 
       {/* What the teacher can do RIGHT NOW. A build takes minutes; a lesson is
@@ -370,12 +472,20 @@ export default function GenerateView({
             </Link>
           )}
 
-          {!readiness.canTeach && readiness.missing.length > 0 && (
-            <span className="text-[11px] text-fg3">
-              Still needs {readiness.missing.slice(0, 2).join(" and ")}
-              {readiness.missing.length > 2 ? ` (+${readiness.missing.length - 2})` : ""}
-            </span>
-          )}
+          {/* Suppressed while the pack is only PLANNED. `missing` is computed
+              from pages that exist, so before the build writes anything it
+              lists the whole lesson — and printed under "13 pages mapped out"
+              it read as a contradiction: the plan visibly contains a hook, and
+              the line underneath said the pack still needed one. It is a useful
+              sentence once pages are being written and a confusing one before. */}
+          {!readiness.canTeach &&
+            readiness.level !== "planned" &&
+            readiness.missing.length > 0 && (
+              <span className="text-[11px] text-fg3">
+                Still needs {readiness.missing.slice(0, 2).join(" and ")}
+                {readiness.missing.length > 2 ? ` (+${readiness.missing.length - 2})` : ""}
+              </span>
+            )}
           {readiness.canTeach && readiness.outstanding > 0 && (
             <span className="text-[11px] text-ok/80">
               The rest keeps building — nothing you print now will be taken away.
@@ -425,6 +535,8 @@ export default function GenerateView({
             stages={stageList}
             state={stages}
             phase={phase}
+            startedAt={startedAt}
+            timings={timings}
           />
         </div>
 

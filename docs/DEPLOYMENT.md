@@ -586,6 +586,40 @@ here is an optimistic redirect and never the authorization boundary — the DAL 
 bypass would not grant access to anything. It should still be patched. Kept separate from
 the port so the two changes stay reviewable independently.
 
+## 7g. `loading.tsx` does not work here — do not add it back without testing
+
+Route-level loading fallbacks are the framework's answer to "the page took a moment and
+nothing acknowledged the click". They were added, and they broke every page they were
+added to. Recorded here because the failure is silent, plausible-looking, and the obvious
+next attempt.
+
+**Symptom.** The skeleton renders and stays forever. No error in the console, no error in
+the terminal, HTTP 200, and the dev overlay shows nothing.
+
+**What is actually happening.** The server does its job: the streamed document contains
+both the fallback and the finished page. On the client the page content is inserted into
+the DOM inside React's hidden staging container (`document.getElementById(...)` finds it;
+`offsetParent` is null and its ancestor carries `hidden`), and the boundary is never
+revealed — the Suspense marker stays at `<!--$~-->`. Hydration itself is fine: the theme
+toggle and the rest of the shell work normally on the stuck page.
+
+**What was ruled out.** Not a CSP (none is set, and inline scripts execute). Not the
+network (a manual `fetch()` of the same URL in the same tab receives the complete document
+in 12ms). Not the skeleton markup — a `loading.tsx` returning a bare `<p>Loading…</p>`
+hangs identically. Not `export const dynamic = "force-dynamic"`, and not the placement:
+root and nested segments both hang.
+
+**State of knowledge.** Reproduced only against `next dev --webpack` on 16.3.0, which is
+what `npm run dev` runs. Whether `next start` behaves the same is **unverified** — the
+production server refuses to boot locally by design when `DATABASE_URL` is unset
+(lib/pg.ts), so testing it needs a real Postgres. Until someone has checked it against a
+deployed instance, treat route-level loading fallbacks as unavailable.
+
+**What ships instead.** `useLinkStatus` inside the sidebar links (see `NavPending` in
+`components/shell/Sidebar.tsx`) — a per-link pending dot. Less capable, and it verifiably
+works. `error.tsx` and `not-found.tsx` are unaffected: neither introduces a Suspense
+boundary, and both are in use.
+
 ## 8. What I need from you
 
 Nothing secret, ever — every key below is pasted by you into Vercel's or Supabase's own

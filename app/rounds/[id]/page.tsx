@@ -24,7 +24,7 @@ export default async function RoundPage(ctx: {
   const con = round.con_team || "Con";
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-10">
+    <div className="mx-auto max-w-4xl">
       <Link href="/rounds" className="text-sm font-bold text-fg3 hover:text-fg1 transition-colors">
         ← Rounds
       </Link>

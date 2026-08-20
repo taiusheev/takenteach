@@ -1,12 +1,15 @@
 /**
  * REGISTERS — how the foundation changes with the LEVEL of the learner.
  *
- * There are exactly two, and there will not be a third without a reference pack
- * to measure it from. The eight "designs" this replaces (playground, dossier,
- * neon, riso, blueprint…) were not levels; they were moods, and having eight of
- * them is why the same component ended up styled in nine places.
+ * There are three, and the bar for adding one is a REFERENCE PACK TO MEASURE
+ * FROM. The eight "designs" this replaces (playground, dossier, neon, riso,
+ * blueprint…) were not levels; they were moods, and having eight of them is why
+ * the same component ended up styled in nine places. JV was added against that
+ * bar: every number in it is read out of the founder's Public Forum Lesson 1,
+ * and the two decisions that are not measurements were found by stress-testing
+ * the first draft against six of his own pages and watching it fail.
  *
- * The two registers disagree about one thing above all — INK — and everything
+ * The registers disagree about one thing above all — INK — and everything
  * else follows from it:
  *
  *   NOVICE  near-black body copy on framed, ruled paper, heavy black cards on
@@ -18,12 +21,18 @@
  *           so seriousness is achieved by SUBTRACTION: no handwriting face, no
  *           rotation, no offset shadows, no emoji.
  *
+ *   JV      ink on near-white, flat rules, and — the rule the whole register
+ *           rests on — NO COLOUR outside the argument-layer code. A junior
+ *           varsity debater is learning to see the parts of an argument, so
+ *           colour is spent teaching that and on nothing else. Bars and badges
+ *           that are accent-filled in elite are ink here.
+ *
  * Because they disagree about ink, a page gets exactly one. Mixing them would
  * resolve to whichever loaded last, which is a coin toss rather than a design.
  */
 import { SLATE } from "./foundation";
 
-export type RegisterId = "novice" | "elite";
+export type RegisterId = "novice" | "elite" | "jv";
 
 export interface Register {
   id: RegisterId;
@@ -139,6 +148,60 @@ export const REGISTERS: Record<RegisterId, Register> = {
       gap: "15px",
       pad: "14px",
       railW: "4px",
+    },
+  },
+  /* ── THE THIRD REGISTER, and the reference pack this file asked for. ──
+     Every number below is measured from the founder's Public Forum Lesson 1,
+     read out of the PDF's own content streams rather than estimated:
+
+       body type          8.3–9.4pt, with 88.9% of all text under 10pt
+       smallest type      6.6pt  (the first JV draft ran labels at 5.6pt — under
+                                  his floor — and this register lifts them back)
+       page              US Letter, 612×792pt, 21pt side margins
+       blank column      67.8% mean, 93.1% on his build page
+
+     The last of those is the one that matters most and is not a colour: on his
+     sheets two thirds of the column is space the student writes into. That is
+     enforced structurally in HOUSE_JV_CSS, not here.
+
+     WHERE IT DIFFERS FROM ELITE, which is the register it is closest to:
+     elite spends the lesson accent on the caption bar and the badge; JV spends
+     no colour at all outside the argument-layer code, because on a JV page the
+     only thing colour is allowed to mean is which layer of an argument you are
+     looking at. Everything else is ink, rule and paper. */
+  jv: {
+    id: "jv",
+    label: "JV",
+    blurb:
+      "Ink on paper, flat rules, colour reserved for argument layers — the competing-but-not-varsity register",
+    // 12px on screen lands in his measured 8.3–9.4pt band at print scale.
+    baseTextPx: 12,
+    paper: "#fcfcfa",
+    bodyInk: "#5a6169",
+    headingInk: "#14171a",
+    // Darkened from the first draft's #8a9099, which the audit measured at
+    // 3.13:1 on paper — a WCAG AA failure carrying 6.5pt labels on four
+    // different components.
+    mutedInk: "#6a7175",
+    rule: "#d9dbd6",
+    card: { border: "1px solid #d9dbd6", radius: "3px", shadow: "none" },
+    frame: "1px solid #d9dbd6",
+    paperGrid: 0,
+    fonts: { display: "display", hand: "body" },
+    playful: false,
+    chrome: {
+      // Ink, not accent — the rule this whole register rests on.
+      barBg: "#14171a",
+      barFg: "#fcfcfa",
+      badgeBg: "transparent",
+      badgeFg: "#5a6169",
+      badgeBorder: "1px solid #d9dbd6",
+      badgeRadius: "2px",
+      headRule: "1.5px solid #14171a",
+      headFg: "#14171a",
+      gap: "13px",
+      pad: "12px",
+      railW: "2px",
     },
   },
 };

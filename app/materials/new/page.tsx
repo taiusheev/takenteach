@@ -48,6 +48,9 @@ export default async function NewMaterialPage({
           ? (sp.subject as Subject)
           : prefs.subject
       }
+      prefillPriorKnowledge={prefs.defaultPriorKnowledge}
+      prefillMisconceptions={prefs.defaultMisconceptions}
+      prefillConstraints={prefs.defaultConstraints}
       initialMode={sp.mode === "unit" ? "unit" : "lesson"}
     />
   );

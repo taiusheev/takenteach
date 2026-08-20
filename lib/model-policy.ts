@@ -297,3 +297,90 @@ export function costOf(
   const rate = RATES[model] ?? RATES[MODELS.opus];
   return (inputTokens * rate.in + outputTokens * rate.out) / 1e6;
 }
+
+/**
+ * PROMPT VERSIONS.
+ *
+ * Every task's prompt gets an explicit revision, recorded against each metered
+ * call. Without it, "the build got more expensive last Tuesday" and "the packs
+ * got worse last Tuesday" are both unanswerable — a prompt edit changes cost
+ * and quality simultaneously and leaves no trace, so the two most important
+ * questions about a change to this system cannot be asked after the fact.
+ *
+ * ── THE RULE ─────────────────────────────────────────────────────────────
+ * Bump the version whenever you change the text a task sends. That is the whole
+ * discipline; it costs one line per edit and it is what makes a regression
+ * attributable to a change rather than to the model having a bad week.
+ *
+ * ── AND IT IS NOT COSMETIC ───────────────────────────────────────────────
+ * The staged tasks share ONE cached system prefix, so editing that prefix
+ * invalidates the cache for every one of them and the next build pays a full
+ * set of writes (2x). A version bump is therefore also the honest record of
+ * "this build was more expensive because I changed the prompt", which is
+ * otherwise indistinguishable from the cache silently breaking.
+ *
+ * v2 across the board: the system prompt and the four standalone prompts had
+ * the product's own name written into them ("You are the lead lesson-pack
+ * author for TakenTeach"). Lessons belong to the school that teaches them, so
+ * the prompts now say so — see the note on brandedKit in lib/db.ts.
+ */
+export const PROMPT_VERSIONS: Record<AiTask, string> = {
+  plan: "plan_v2",
+  outline: "outline_v2",
+  foundation: "foundation_v2",
+  evidence: "evidence_v2",
+  activities: "activities_v2",
+  "teacher-guide": "teacher_guide_v2",
+  polish: "polish_v2",
+  revise: "revise_v2",
+  qa: "qa_v2",
+  "design-system": "design_system_v2",
+  "art-direction": "art_direction_v2",
+  "unit-plan": "unit_plan_v2",
+  research: "research_v2",
+  "simple-content": "simple_content_v2",
+};
+
+export function promptVersion(task: AiTask): string {
+  return PROMPT_VERSIONS[task] ?? `${task}_v1`;
+}
+
+/**
+ * The output ceiling per task, in tokens.
+ *
+ * ── WHY THIS IS NOT ONE NUMBER ───────────────────────────────────────────
+ * Every call in the pipeline sent `max_tokens: 64000`, which is not a budget —
+ * it is the absence of one. Output bills at 5x input, so a single runaway Opus
+ * call at that ceiling is $1.60, more than a third of a whole build, and
+ * nothing in the system would have stopped it or even remarked on it.
+ *
+ * The numbers below are the calibrated per-call output from four logged builds
+ * (see lib/preflight.ts) with generous headroom — roughly 2.5x the observed
+ * figure — so they cannot truncate a legitimate result. They exist to catch the
+ * pathological case: a model that loops, or a schema that invites an essay.
+ *
+ * Adaptive thinking counts against this, which is why the ceilings are set well
+ * above visible output rather than at it.
+ */
+export const MAX_OUTPUT: Record<AiTask, number> = {
+  plan: 4_000,
+  outline: 12_000,
+  foundation: 16_000,
+  evidence: 24_000,
+  // The largest legitimate call: a batch of pages, each with its components.
+  activities: 48_000,
+  // Six coaching fields for every page plus the timing plan and rubric.
+  "teacher-guide": 40_000,
+  polish: 32_000,
+  revise: 24_000,
+  qa: 32_000,
+  "design-system": 24_000,
+  "art-direction": 8_000,
+  "unit-plan": 16_000,
+  research: 8_000,
+  "simple-content": 24_000,
+};
+
+export function maxOutputFor(task: AiTask): number {
+  return MAX_OUTPUT[task] ?? 32_000;
+}

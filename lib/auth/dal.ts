@@ -90,6 +90,10 @@ export const getSession = cache(async (): Promise<Session | null> => {
       orgId: record.orgId,
       userId: record.userId,
       canSeeAllPrivate: canSeeAllPrivate(record),
+      /* Carried so the printed pack can wear the school's name. It is read by
+         exactly one query (getKitForMaterial) and never used to filter — the
+         org ID does the filtering, here as everywhere. */
+      orgName: record.orgName,
     },
   };
 });

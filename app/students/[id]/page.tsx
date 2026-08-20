@@ -32,7 +32,7 @@ export default async function StudentPage({
   const seen = states.filter((s) => s.count > 0);
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-10">
+    <div className="mx-auto max-w-5xl">
       <Link href="/students" className="text-sm font-bold text-fg3 hover:text-fg1">
         ← Students
       </Link>

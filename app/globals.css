@@ -1079,6 +1079,40 @@ body {
   padding: 0;
 }
 
+/* ── TIGHTEN BEFORE YOU SHRINK ─────────────────────────────────────────────
+   The fit pass used to have exactly one tool: scale the whole content column
+   with `zoom`, down to a floor of 0.85. Below that the type stops being
+   readable at arm's length, so the floor is right — but when it binds, the page
+   simply overflows the sheet and content prints off the paper.
+
+   Measured on a real 14-page pack: two sheets were still over at the floor, one
+   by 2% and one by 8.5%. On the 8.5% page, 84px of the excess was seven 12px
+   gaps between blocks and 49px was page padding — a third of the overflow was
+   white space, not content.
+
+   So the ladder gains a rung BEFORE the type shrinks. Squeezing the air out of
+   a page costs a reader nothing; squeezing the letters costs them the page.
+   Two levels, applied in order, and only to sheets that need them — a page that
+   fits is never touched, so a comfortable pack keeps its full rhythm.
+   ──────────────────────────────────────────────────────────────────────── */
+.print-page[data-tight="1"] > .pk-fit > * {
+  margin-bottom: 8px !important;
+}
+.print-page[data-tight="2"] > .pk-fit > * {
+  margin-bottom: 5px !important;
+}
+.print-page[data-tight="2"] {
+  /* The head and foot margins, not the sides: narrowing the side margins would
+     lengthen every line and undo the saving by rewrapping less text per line. */
+  padding-top: 5mm;
+  padding-bottom: 3mm;
+}
+/* The footer keeps its separation from the last block either way — a rule that
+   collides with the content above it reads as a printing fault. */
+.print-page[data-tight] > .pk-fit > .print-footer {
+  margin-bottom: 0 !important;
+}
+
 /* The scalable content column inside the fixed A4 frame. min-height:100% makes
    short pages fill the sheet (so the margin-top:auto footer drops to the
    bottom); tall pages grow past it and get zoom-scaled to fit by the fit pass. */

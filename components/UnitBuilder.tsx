@@ -86,7 +86,7 @@ export default function UnitBuilder() {
   const formats = plan ? formatsForSubject(plan.subject) : [];
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-12">
+    <div className="mx-auto max-w-3xl">
       <div className="mb-8 text-center">
         <h1 className="font-display text-5xl text-fg1">Build a class</h1>
         <p className="mt-2 text-sm text-fg2">

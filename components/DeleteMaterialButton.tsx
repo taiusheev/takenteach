@@ -44,7 +44,7 @@ export default function DeleteMaterialButton({
         disabled={busy}
         className="rounded-md border border-danger/40 px-3 py-2 text-sm font-bold text-danger/80 hover:bg-danger/10 hover:text-danger disabled:opacity-40 transition-colors"
       >
-        {busy ? "Deleting…" : "🗑 Delete draft"}
+        {busy ? "Deleting…" : "Delete draft"}
       </button>
     </div>
   );

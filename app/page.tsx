@@ -14,10 +14,14 @@ import {
 } from "@/lib/content-types";
 import { LessonPack } from "@/lib/lesson-pack-schema";
 import { unitKey } from "@/lib/unit-plan";
+import { packReadiness } from "@/lib/readiness";
+import { resumeCards } from "@/lib/resume";
 import StatusChip from "@/components/StatusChip";
 import Greeting from "@/components/dash/Greeting";
-import StatCards from "@/components/dash/StatCards";
+import LibraryPulse from "@/components/dash/LibraryPulse";
+import ContinueRow from "@/components/dash/ContinueRow";
 import NewMaterialButton from "@/components/NewMaterialButton";
+import DuplicateButton from "@/components/DuplicateButton";
 import LibraryControls from "@/components/LibraryControls";
 import { LogoMark } from "@/components/Logo";
 import { inkOn } from "@/lib/design/palette";
@@ -117,9 +121,12 @@ export default async function LibraryPage({
         <div>
           <Greeting name={session.name} />
           <p className="mt-1.5 text-[14px] text-fg2">
+            {/* The product covers debate, critical thinking and academic
+                writing; the old line promised only debate to every teacher on
+                every visit. */}
             {all.length === 0
               ? "Build your first lesson — it takes one sentence to start."
-              : "Build your next debate lesson in minutes."}
+              : "Describe the next lesson in a sentence and it builds itself."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
@@ -132,31 +139,21 @@ export default async function LibraryPage({
         </div>
       </div>
 
-      <div className="mb-9">
-        <StatCards
-          stats={[
-            {
-              label: "In the library",
-              value: summary.total,
-              icon: "library",
-              note: built < summary.total ? `${built} built` : "all built",
-            },
-            { label: "This month", value: thisMonth, icon: "built" },
-            {
-              label: "Classes running",
-              value: units.length,
-              icon: "classes",
-            },
-            {
-              label: "Awaiting review",
-              value: inReview,
-              icon: "review",
-              href: inReview > 0 ? "/review" : undefined,
-              tone: "accent",
-            },
-          ]}
-        />
-      </div>
+      {/* The state of the library, as one line rather than four cards — see
+          the note in LibraryPulse on why three of those four figures never
+          changed what anyone did next. */}
+      <LibraryPulse
+        total={summary.total}
+        built={built}
+        thisMonth={thisMonth}
+        classes={units.length}
+        awaitingReview={inReview}
+      />
+
+      {/* Unfinished work first. It is the only thing on this page that is
+          about THIS teacher's next twenty minutes; everything below is about
+          the library as a whole. */}
+      <ContinueRow cards={resumeCards(all)} />
 
       <div className="mx-auto max-w-6xl">
 
@@ -278,15 +275,22 @@ export default async function LibraryPage({
                   <span className="shrink-0 rounded bg-inkmid px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-fg3">
                     {contentTypeDef(m.type).label}
                   </span>
-                  {/* an abandoned shell reads as a real lesson until you open it */}
-                  {isUnbuilt(m.type, m.content) && (
-                    <span
-                      title="Created but never built — no content in it yet"
-                      className="shrink-0 rounded border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-warn"
-                    >
-                      Empty
-                    </span>
-                  )}
+                  {/* An abandoned shell reads as a real lesson until you open
+                      it — and so, worse, does a build that stopped half way.
+                      Only the two states that need attention are marked; a
+                      finished pack wears nothing, so a badge in this list
+                      always means "look at me". */}
+                  {(() => {
+                    const state = rowState(m.type, m.content);
+                    return state ? (
+                      <span
+                        title={state.title}
+                        className="shrink-0 rounded border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-warn"
+                      >
+                        {state.label}
+                      </span>
+                    ) : null;
+                  })()}
                 </div>
                 {/* Size and recency sit OUTSIDE the truncating half: a long
                     skill focus used to eat them, so the richest packs in the
@@ -312,18 +316,29 @@ export default async function LibraryPage({
                 )}
             </div>
 
+            {/* The row's actions. Hidden until the row is hovered or focused,
+                so a library of forty reads as a list rather than as a wall of
+                buttons — but they are reachable by keyboard at all times, which
+                a `hidden`-until-hover implementation would not be. */}
             <div className="relative z-10 flex shrink-0 items-center gap-2">
               {m.type === "lesson-pack" && !isUnbuilt(m.type, m.content) && (
                 <Link
                   href={`/materials/${m.id}/teach`}
-                  className="rounded-md border border-brand/40 bg-brandsoft/60 px-2.5 py-1 text-[11px] font-bold text-brandink opacity-0 transition-opacity hover:bg-brandsoft focus:opacity-100 group-hover:opacity-100"
+                  className="hidden rounded-md border border-brand/40 bg-brandsoft/60 px-2.5 py-1 text-[11px] font-bold text-brandink opacity-0 transition-opacity hover:bg-brandsoft focus:opacity-100 group-hover:opacity-100 sm:block"
                 >
-                  ▶ Teach
+                  Teach
                 </Link>
+              )}
+              {canCreate(role) && (
+                <DuplicateButton
+                  materialId={m.id}
+                  title={m.title}
+                  className="hidden rounded-md border border-inkline px-2.5 py-1 text-[11px] font-bold text-fg2 opacity-0 transition-opacity hover:text-fg1 focus:opacity-100 disabled:opacity-40 group-hover:opacity-100 sm:block"
+                />
               )}
               <Link
                 href={`/materials/${m.id}/print`}
-                className="rounded-md border border-inkline px-2.5 py-1 text-[11px] font-bold text-fg2 opacity-0 transition-opacity hover:text-fg1 focus:opacity-100 group-hover:opacity-100"
+                className="hidden rounded-md border border-inkline px-2.5 py-1 text-[11px] font-bold text-fg2 opacity-0 transition-opacity hover:text-fg1 focus:opacity-100 group-hover:opacity-100 sm:block"
               >
                 Print
               </Link>
@@ -365,6 +380,43 @@ export default async function LibraryPage({
       </div>
     </div>
   );
+}
+
+/**
+ * The one thing a library row cannot say for itself: how far the build got.
+ *
+ * Returns null for anything finished — a badge that appears on every row is a
+ * decoration, not a signal.
+ */
+function rowState(
+  type: string,
+  content: Parameters<typeof isUnbuilt>[1]
+): { label: string; title: string } | null {
+  if (type !== "lesson-pack") {
+    return isUnbuilt(type, content)
+      ? { label: "Empty", title: "Created but never filled in" }
+      : null;
+  }
+  const r = packReadiness(content as LessonPack);
+  if (r.level === "empty") {
+    return { label: "Not built", title: "Created but never built — no pages in it yet" };
+  }
+  if (r.level === "planned") {
+    return { label: "Planned", title: "The outline exists, but no pages are written" };
+  }
+  if (r.level === "partial") {
+    return {
+      label: "Half built",
+      title: `${r.pages} pages written — still needs ${r.missing.slice(0, 2).join(" and ")}`,
+    };
+  }
+  if (r.outstanding > 0) {
+    return {
+      label: `${r.outstanding} to go`,
+      title: `Teachable now, but ${r.outstanding} planned page(s) were never written`,
+    };
+  }
+  return null;
 }
 
 /** A section rule. The heading used to sit alone above a grid with nothing to

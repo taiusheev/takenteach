@@ -1,13 +1,14 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { SUBJECTS, SUBJECT_DEFS, Subject } from "@/lib/subjects";
 import { ContentType, typesForSubject } from "@/lib/content-types";
 import { GRADE_BANDS, RIGOR_LEVELS, RIGOR_DEFS, RigorLevel } from "@/lib/lesson-quality";
 import { formatsForSubject } from "@/lib/lesson-formats";
 import { LESSON_DESIGNS } from "@/lib/lesson-designs";
 import { DEBATE_FORMATS } from "@/lib/debate-formats";
+import { IconSpark } from "@/components/shell/icons";
 
 /** A candidate source the research helper proposes — a lead to verify. */
 interface SourceLead {
@@ -20,13 +21,6 @@ interface SourceLead {
   findHint: string;
 }
 
-/**
- * Quick Build — brief-first flow. The author writes as much or as little as they
- * want in the brief; AI proposes the whole setup (subject, skill, anchor,
- * format, level) and the full brief is carried into the build as the
- * authoritative prompt. They can paste their own research, or have AI suggest
- * verifiable source leads. Fewer keys, wide structural variety, quality retained.
- */
 /** What /api/plan infers — passed straight into create() so nothing is lost. */
 interface LessonPlanFields {
   subject: Subject;
@@ -42,12 +36,38 @@ interface LessonPlanFields {
   debateFormat?: string;
 }
 
+/**
+ * QUICK BUILD — one box, then a plan you can correct.
+ *
+ * ── WHY THE CHIPS ARE EDITABLE NOW ───────────────────────────────────────
+ * The AI infers eleven things from one sentence and it gets most of them right.
+ * This screen used to show them as read-only chips with a link underneath
+ * captioned "Tweak the details" — which opened the fourteen-field form the whole
+ * flow exists to avoid. So the common case (the AI guessed 120 minutes and the
+ * class is 90) cost a teacher an expanded form and a hunt for the right input,
+ * to change one number they were already looking at.
+ *
+ * Each chip is now the control for the thing it displays. Tap "120 min", pick
+ * 90, done. The form survives underneath for the teacher who would rather set
+ * everything by hand, which is a genuinely different intention and not the
+ * default one.
+ *
+ * ── ONE PRIMARY ACTION ───────────────────────────────────────────────────
+ * There used to be two. The brief box carried "Build my lesson →" and, once a
+ * plan existed, a second row appeared below with "Build it with AI →" and
+ * "Start blank instead" — two gradient-filled primaries for the same job on one
+ * screen, and a teacher choosing between them is choosing between things they
+ * cannot tell apart. There is one build button on this page now.
+ */
 export default function QuickBuildWizard({
   prefillSkillFocus = "",
   prefillSubject,
   prefillResolution = "",
   prefillGradeBand = "",
   prefillDurationMin,
+  prefillPriorKnowledge = "",
+  prefillMisconceptions = "",
+  prefillConstraints = "",
 }: {
   prefillSkillFocus?: string;
   prefillSubject?: Subject;
@@ -55,6 +75,10 @@ export default function QuickBuildWizard({
   prefillResolution?: string;
   prefillGradeBand?: string;
   prefillDurationMin?: number;
+  /** this teacher's saved class defaults — see lib/auth/preferences.ts */
+  prefillPriorKnowledge?: string;
+  prefillMisconceptions?: string;
+  prefillConstraints?: string;
 } = {}) {
   const router = useRouter();
 
@@ -62,7 +86,6 @@ export default function QuickBuildWizard({
   const [planning, setPlanning] = useState(false);
   const [planned, setPlanned] = useState(false);
   const [formatReason, setFormatReason] = useState("");
-  // the competitive format the squad debates — drives crossfire vs POIs vs CX
   const [debateFormat, setDebateFormat] = useState("");
 
   const [subject, setSubject] = useState<Subject>(prefillSubject ?? "debate");
@@ -71,8 +94,6 @@ export default function QuickBuildWizard({
   const [coverTitle, setCoverTitle] = useState("");
   const [skillFocus, setSkillFocus] = useState(prefillSkillFocus);
   const [series, setSeries] = useState("");
-  // A motion arriving from the library is already the anchor — the teacher
-  // shouldn't retype a wording the library holds verbatim.
   const [resolution, setResolution] = useState(prefillResolution);
   const [durationMin, setDurationMin] = useState(prefillDurationMin ?? 120);
   const [gradeBand, setGradeBand] = useState<string>(prefillGradeBand || "Grades 6–8");
@@ -80,8 +101,7 @@ export default function QuickBuildWizard({
   const [format, setFormat] = useState<string>("auto");
   const [design, setDesign] = useState<string>("dossier");
 
-  const [showDetails, setShowDetails] = useState(false);
-  const [mode, setMode] = useState<"quick" | "full">("quick");
+  const [showManual, setShowManual] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -92,27 +112,24 @@ export default function QuickBuildWizard({
   const [researchError, setResearchError] = useState("");
 
   // Teaching detail — optional levers that sharpen the generated lesson.
-  const [priorKnowledge, setPriorKnowledge] = useState("");
-  const [misconceptions, setMisconceptions] = useState("");
-  const [constraints, setConstraints] = useState("");
+  const [priorKnowledge, setPriorKnowledge] = useState(prefillPriorKnowledge);
+  const [misconceptions, setMisconceptions] = useState(prefillMisconceptions);
+  const [constraints, setConstraints] = useState(prefillConstraints);
+  // Sharp, specific questions the planner couldn't answer from the idea alone
+  // — see the note on `clarifyingQuestions` in lib/ai.ts. Answered by typing
+  // into the three fields below, not by a separate Q&A flow.
+  const [clarifyingQuestions, setClarifyingQuestions] = useState<string[]>([]);
 
   const def = SUBJECT_DEFS[subject];
   const formats = formatsForSubject(subject);
 
-  /**
-   * Plan, then build, without stopping in between.
-   *
-   * The two-step flow made every teacher wait twice and click twice to reach the
-   * same place, because the plan is almost always right — and when it isn't, the
-   * chips are faster to correct on the built pack than a form is to fill before
-   * it exists. "Plan first" remains available for the cautious case.
-   */
+  /** Plan, then build, without stopping in between. */
   async function planAndBuild() {
     const plan = await planIt();
     if (plan) await create(plan);
   }
 
-  async function planIt() {
+  async function planIt(): Promise<LessonPlanFields | null> {
     if (!idea.trim()) return null;
     setPlanning(true);
     setError("");
@@ -120,7 +137,13 @@ export default function QuickBuildWizard({
       const res = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idea }),
+        // What the teacher already told us — either just now (they typed into
+        // "Add teaching detail" before planning) or on file from Settings — so
+        // the planner doesn't ask a clarifying question already answered.
+        body: JSON.stringify({
+          idea,
+          known: { priorKnowledge, misconceptions, constraints },
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Planning failed");
@@ -137,10 +160,12 @@ export default function QuickBuildWizard({
       setFormat(p.format ?? "auto");
       setFormatReason(p.formatReason ?? "");
       setDebateFormat(p.debateFormat ?? "");
+      setClarifyingQuestions(p.clarifyingQuestions ?? []);
       setPlanned(true);
       return p;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Planning failed");
+      return null;
     } finally {
       setPlanning(false);
     }
@@ -151,7 +176,7 @@ export default function QuickBuildWizard({
    * earlier in planIt() has not flushed yet, so reading it here would build the
    * pack from the DEFAULTS the planner just replaced.
    */
-  async function create(plan?: LessonPlanFields) {
+  async function create(plan?: LessonPlanFields, openBlank = false) {
     setBusy(true);
     setError("");
     const v = {
@@ -168,24 +193,29 @@ export default function QuickBuildWizard({
       debateFormat: plan?.debateFormat ?? debateFormat,
     };
     const title = `${v.lessonCode ? v.lessonCode + " · " : ""}${v.coverTitle || v.skillFocus || "Untitled lesson pack"}`;
-    const res = await fetch("/api/materials", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title, type, design, ...v,
-        brief: idea, sourceMaterial,
-        priorKnowledge, misconceptions, constraints,
-      }),
-    });
-    const data = await res.json();
-    setBusy(false);
-    if (!res.ok) {
-      setError(data.error ?? "Could not create material");
-      return;
+    try {
+      const res = await fetch("/api/materials", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title, type, design, ...v,
+          brief: idea, sourceMaterial,
+          priorKnowledge, misconceptions, constraints,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Could not create material");
+        setBusy(false);
+        return;
+      }
+      router.push(
+        openBlank ? `/materials/${data.id}/edit` : `/materials/${data.id}/generate`
+      );
+    } catch {
+      setError("Network error — the lesson was not created.");
+      setBusy(false);
     }
-    router.push(
-      mode === "quick" ? `/materials/${data.id}/generate` : `/materials/${data.id}/edit`
-    );
   }
 
   async function research() {
@@ -212,8 +242,10 @@ export default function QuickBuildWizard({
     return `${l.institution}, "${l.likelyPublication}" (${l.approxYear}) [${l.side}] — ${l.claim} · Limit: ${l.limit} · Verify: ${l.findHint}`;
   }
   function addLead(l: SourceLead) {
-    const line = leadToText(l);
-    setSourceMaterial((cur) => (cur.trim() ? `${cur.trim()}\n${line}` : line));
+    setSourceMaterial((cur) => {
+      const line = leadToText(l);
+      return cur.trim() ? `${cur.trim()}\n${line}` : line;
+    });
     setLeads((cur) => cur.filter((x) => x !== l));
   }
   function addAllLeads() {
@@ -223,57 +255,62 @@ export default function QuickBuildWizard({
   }
 
   const ready = skillFocus.trim() && resolution.trim();
+  const working = planning || busy;
 
   return (
-    <div>
-
-      {/* the brief — the teacher's own prompt for the whole build */}
-      {/* THE BRIEF is the one thing on this screen that matters, so it is the
-          one thing that reacts: the border takes the brand when the caret is
-          in it. Everything else on the page is quiet by comparison, which is
-          how a focal point is made — not by making it bigger. */}
-      <div className="card mb-6 p-2 transition-colors focus-within:border-brand/60">
-        <span className="block px-3 pt-2 text-[11px] font-bold uppercase tracking-widest text-fg3">
-          Lesson brief
-        </span>
+    <div className="flex flex-col gap-5">
+      {/* ── THE BRIEF ──
+          The one thing on this screen that matters, so the one thing that
+          reacts: the border takes the brand when the caret is in it. */}
+      <div className="card p-2 transition-colors focus-within:border-brand/60">
+        <label
+          htmlFor="brief"
+          className="block px-3 pt-2 text-[11px] font-bold uppercase tracking-[0.1em] text-fg3"
+        >
+          What do you need?
+        </label>
         <textarea
+          id="brief"
           value={idea}
           onChange={(e) => setIdea(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) planIt();
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && idea.trim() && !working) {
+              void (planned ? create() : planAndBuild());
+            }
           }}
           rows={4}
-          // Short enough to FIT. The old example ran to six lines in a
-          // four-row box, so it truncated mid-word — a placeholder that looks
-          // cut off reads as a broken input before anyone has typed anything.
           placeholder={`e.g. 90-minute novice class tomorrow — they're weak on rebuttal and just say "I disagree" instead of attacking the reasoning. Keep it hands-on.`}
-          className="w-full resize-none rounded-xl bg-transparent px-4 py-3 text-base text-fg1 outline-none placeholder:text-fg3"
+          className="w-full resize-none rounded-xl bg-transparent px-4 py-3 text-[15px] leading-relaxed text-fg1 outline-none placeholder:text-fg3"
         />
         <div className="flex flex-wrap items-center justify-between gap-3 px-2 pb-1">
-          <span className="min-w-0 flex-1 text-[11px] text-fg3">
-            A sentence or a full spec — the AI uses all of it · ⌘/Ctrl + Enter
+          <span className="min-w-0 flex-1 text-[11.5px] text-fg3">
+            A sentence or a full spec — the AI reads all of it.{" "}
+            <span className="whitespace-nowrap">
+              <kbd>⌘</kbd>
+              <kbd>↵</kbd> to build
+            </span>
           </span>
           <div className="flex shrink-0 items-center gap-3">
             {!planned && (
               <button
-                onClick={planIt}
-                disabled={planning || busy || !idea.trim()}
-                className="whitespace-nowrap text-[11px] font-bold text-fg3 hover:text-fg1 disabled:opacity-40"
+                onClick={() => void planIt()}
+                disabled={working || !idea.trim()}
+                className="whitespace-nowrap text-[12px] font-semibold text-fg3 transition-colors hover:text-fg1 disabled:opacity-40"
               >
-                Plan first
+                Show me the plan first
               </button>
             )}
             <button
-              onClick={planned ? planIt : planAndBuild}
-              disabled={planning || busy || !idea.trim()}
-              className="btn btn-primary whitespace-nowrap disabled:opacity-40"
+              onClick={() => void (planned ? create() : planAndBuild())}
+              disabled={working || !idea.trim() || (planned && !ready)}
+              className="btn btn-primary whitespace-nowrap"
             >
               {planning
                 ? "Planning…"
                 : busy
-                  ? "Building…"
+                  ? "Starting the build…"
                   : planned
-                    ? "↻ Re-plan"
+                    ? "Build this lesson →"
                     : "Build my lesson →"}
             </button>
           </div>
@@ -281,178 +318,124 @@ export default function QuickBuildWizard({
       </div>
 
       {error && (
-        <p className="mb-4 rounded-lg border border-danger/40 bg-danger/10 px-4 py-2 text-xs text-danger">
+        <p className="rounded-lg border border-danger/40 bg-danger/10 px-4 py-2.5 text-[12.5px] text-danger">
           {error}
         </p>
       )}
 
-      {/* the AI's proposal, as an editable summary */}
+      {/* ── THE PLAN, AS CONTROLS ── */}
       {planned && (
-        <div className="mb-6 rounded-xl border border-ok/30 bg-ok/5 p-4">
-          <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-ok">
-            ✨ Proposed plan
+        <div className="card p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="flex items-center gap-1.5 text-[13px] font-semibold text-fg1">
+              <IconSpark size={14} className="text-brand2" />
+              Here&apos;s the plan
+            </h2>
+            <button
+              onClick={() => void planIt()}
+              disabled={working}
+              className="text-[12px] font-semibold text-fg3 transition-colors hover:text-fg1 disabled:opacity-40"
+            >
+              {planning ? "Re-planning…" : "Plan it again"}
+            </button>
           </div>
-          <div className="flex flex-wrap gap-2 text-xs">
-            <Chip label={SUBJECT_DEFS[subject].label} icon={SUBJECT_DEFS[subject].emoji} />
-            <Chip label={skillFocus || "—"} />
-            <Chip label={`${formats.find((f) => f.id === format)?.emoji ?? "✨"} ${formats.find((f) => f.id === format)?.label ?? "Auto"}`} />
-            <Chip label={`${durationMin} min`} />
-            <Chip label={gradeBand} />
-            <Chip label={RIGOR_DEFS[rigorLevel].label} />
-            {debateFormat && (
-              <Chip label={DEBATE_FORMATS.find((f) => f.id === debateFormat)?.short ?? debateFormat} />
-            )}
-          </div>
-          {resolution && (
-            <p className="mt-2 text-xs text-fg2">“{resolution}”</p>
-          )}
-          {formatReason && (
-            <p className="mt-1 text-[11px] text-fg3">Format: {formatReason}</p>
-          )}
-          <button
-            onClick={() => setShowDetails((v) => !v)}
-            className="mt-2 text-[11px] font-bold text-accent hover:underline"
-          >
-            {showDetails ? "Hide details" : "Tweak the details"}
-          </button>
-        </div>
-      )}
 
-      {/* details — collapsed by default; the escape hatch to set it by hand */}
-      {/* Everything below is opt-in. A teacher who writes one sentence should
-          never see a 14-field form before the lesson exists. */}
-      <details className="mb-6" open={showDetails}>
-        <summary className="mb-3 cursor-pointer text-xs font-bold uppercase tracking-widest text-fg3">
-          {planned ? "Adjust anything" : "Or set it up by hand"}
-        </summary>
+          <p className="mb-3 text-[11.5px] text-fg3">
+            Tap anything to change it — nothing is built yet.
+          </p>
 
-          <div className="flex flex-col gap-5">
-            {/* subject */}
-            <div>
-              <span className="field-label">Track</span>
-              <div className="grid gap-2 sm:grid-cols-3">
-                {SUBJECTS.map((s) => {
-                  const d = SUBJECT_DEFS[s];
-                  const active = subject === s;
-                  return (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => {
-                        setSubject(s);
-                        if (!typesForSubject(s).some((t) => t.id === type)) setType("lesson-pack");
-                        if (!formatsForSubject(s).some((f) => f.id === format)) setFormat("auto");
-                      }}
-                      className={`rounded-xl border p-3 text-left transition-colors ${
-                        active ? "border-accent/70 bg-inkcard" : "border-inkline bg-inkmid hover:border-accent/30"
-                      }`}
-                      style={active ? { borderColor: d.theme.accent } : undefined}
-                    >
-                      <div className="text-xl">{d.emoji}</div>
-                      <div className="mt-0.5 text-sm font-bold text-fg1">{d.label}</div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+          <div className="flex flex-wrap gap-2">
+            <PlanChip label="Track" value={SUBJECT_DEFS[subject].label}>
+              <select
+                className="field-input"
+                value={subject}
+                onChange={(e) => {
+                  const s = e.target.value as Subject;
+                  setSubject(s);
+                  if (!typesForSubject(s).some((t) => t.id === type)) setType("lesson-pack");
+                  if (!formatsForSubject(s).some((f) => f.id === format)) setFormat("auto");
+                }}
+              >
+                {SUBJECTS.map((s) => (
+                  <option key={s} value={s}>{SUBJECT_DEFS[s].label}</option>
+                ))}
+              </select>
+            </PlanChip>
 
-            {/* format gallery — the variety layer */}
-            {type === "lesson-pack" && (
-              <div>
-                <span className="field-label">Lesson format — how the class is shaped</span>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {formats.map((f) => {
-                    const active = format === f.id;
-                    return (
-                      <button
-                        key={f.id}
-                        type="button"
-                        onClick={() => setFormat(f.id)}
-                        className={`rounded-xl border p-3 text-left transition-colors ${
-                          active ? "border-accent/70 bg-inkcard" : "border-inkline bg-inkmid hover:border-accent/30"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg">{f.emoji}</span>
-                          <span className="text-sm font-bold text-fg1">{f.label}</span>
-                        </div>
-                        <p className="mt-0.5 text-[11px] leading-snug text-fg3">{f.blurb}</p>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            <PlanChip label="Skill focus" value={skillFocus || "Not set"} wide>
+              <input
+                className="field-input"
+                value={skillFocus}
+                onChange={(e) => setSkillFocus(e.target.value)}
+                placeholder="Rebuttal — attacking the warrant"
+              />
+            </PlanChip>
 
-            {/* design gallery — the visual look of the printed pack */}
-            {type === "lesson-pack" && (
-              <div>
-                <span className="field-label">Print design — the visual look</span>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {LESSON_DESIGNS.map((d) => {
-                    const active = design === d.id;
-                    return (
-                      <button
-                        key={d.id}
-                        type="button"
-                        onClick={() => setDesign(d.id)}
-                        className={`rounded-xl border p-3 text-left transition-colors ${
-                          active ? "border-accent/70 bg-inkcard" : "border-inkline bg-inkmid hover:border-accent/30"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg">{d.emoji}</span>
-                          <span className="text-sm font-bold text-fg1">{d.label}</span>
-                        </div>
-                        <p className="mt-0.5 text-[11px] leading-snug text-fg3">{d.blurb}</p>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            <PlanChip
+              label="Shape"
+              value={formats.find((f) => f.id === format)?.label ?? "Auto"}
+              wide
+            >
+              <select
+                className="field-input"
+                value={format}
+                onChange={(e) => setFormat(e.target.value)}
+              >
+                {formats.map((f) => (
+                  <option key={f.id} value={f.id}>{f.label} — {f.blurb}</option>
+                ))}
+              </select>
+              {formatReason && (
+                <p className="mt-1.5 text-[11px] leading-snug text-fg3">
+                  The AI chose {formats.find((f) => f.id === format)?.label}: {formatReason}
+                </p>
+              )}
+            </PlanChip>
 
-            {/* content type (only when not the default) */}
-            {typesForSubject(subject).length > 1 && (
-              <label className="block">
-                <span className="field-label">Content type</span>
-                <select className="field-input" value={type} onChange={(e) => setType(e.target.value as ContentType)}>
-                  {typesForSubject(subject).map((t) => (
-                    <option key={t.id} value={t.id}>{t.emoji} {t.label} · {t.scale}</option>
-                  ))}
-                </select>
-              </label>
-            )}
+            <PlanChip label="Length" value={`${durationMin} min`}>
+              <select
+                className="field-input"
+                value={durationMin}
+                onChange={(e) => setDurationMin(Number(e.target.value))}
+              >
+                {[30, 45, 60, 75, 90, 105, 120, 150, 180].map((m) => (
+                  <option key={m} value={m}>{m} minutes</option>
+                ))}
+              </select>
+            </PlanChip>
 
-            <div className="grid gap-3 sm:grid-cols-3">
-              <label className="block">
-                <span className="field-label">Lesson code</span>
-                <input className="field-input" value={lessonCode} onChange={(e) => setLessonCode(e.target.value)} placeholder="L2" />
-              </label>
-              <label className="block sm:col-span-2">
-                <span className="field-label">Skill focus</span>
-                <input className="field-input" value={skillFocus} onChange={(e) => setSkillFocus(e.target.value)} placeholder="Rebuttal — attacking the warrant" />
-              </label>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block">
-                <span className="field-label">Cover title</span>
-                <input className="field-input" value={coverTitle} onChange={(e) => setCoverTitle(e.target.value)} placeholder="THE COUNTERPUNCH" />
-              </label>
-              <label className="block">
-                <span className="field-label">Series / cohort</span>
-                <input className="field-input" value={series} onChange={(e) => setSeries(e.target.value)} placeholder="Novice Debate" />
-              </label>
-            </div>
-            <label className="block">
-              <span className="field-label">{def.anchorLabel} (anchors every page)</span>
-              <textarea className="field-textarea !min-h-14" value={resolution} onChange={(e) => setResolution(e.target.value)} placeholder={def.anchorPlaceholder} />
-            </label>
+            <PlanChip label="Year group" value={gradeBand}>
+              <select
+                className="field-input"
+                value={gradeBand}
+                onChange={(e) => setGradeBand(e.target.value)}
+              >
+                {GRADE_BANDS.map((g) => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
+              </select>
+            </PlanChip>
+
+            <PlanChip label="Rigor" value={RIGOR_DEFS[rigorLevel].label}>
+              <select
+                className="field-input"
+                value={rigorLevel}
+                onChange={(e) => setRigorLevel(e.target.value as RigorLevel)}
+              >
+                {RIGOR_LEVELS.map((r) => (
+                  <option key={r} value={r}>{RIGOR_DEFS[r].label}</option>
+                ))}
+              </select>
+            </PlanChip>
+
             {subject === "debate" && (
-              <label className="block">
-                <span className="field-label">
-                  Competitive format — decides crossfire vs. POIs vs. cross-ex
-                </span>
+              <PlanChip
+                label="Competition format"
+                value={
+                  DEBATE_FORMATS.find((f) => f.id === debateFormat)?.short ??
+                  "Format-agnostic"
+                }
+              >
                 <select
                   className="field-input"
                   value={debateFormat}
@@ -460,62 +443,120 @@ export default function QuickBuildWizard({
                 >
                   <option value="">Format-agnostic</option>
                   {DEBATE_FORMATS.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.label} ({f.short})
-                    </option>
+                    <option key={f.id} value={f.id}>{f.label} ({f.short})</option>
                   ))}
                 </select>
-              </label>
+              </PlanChip>
             )}
-            <div className="grid gap-3 sm:grid-cols-3">
-              <label className="block">
-                <span className="field-label">Duration (min)</span>
-                <input type="number" className="field-input" value={durationMin} onChange={(e) => setDurationMin(Math.max(30, Number(e.target.value) || 120))} />
-              </label>
-              <label className="block">
-                <span className="field-label">Grade band</span>
-                <select className="field-input" value={gradeBand} onChange={(e) => setGradeBand(e.target.value)}>
-                  {GRADE_BANDS.map((g) => <option key={g} value={g}>{g}</option>)}
-                </select>
-              </label>
-              <label className="block">
-                <span className="field-label">Rigor</span>
-                <select className="field-input" value={rigorLevel} onChange={(e) => setRigorLevel(e.target.value as RigorLevel)}>
-                  {RIGOR_LEVELS.map((r) => <option key={r} value={r}>{RIGOR_DEFS[r].label}</option>)}
-                </select>
-              </label>
-            </div>
-          </div>
-      </details>
 
-      {/* teaching detail — optional levers that sharpen the lesson */}
-      <details className="mb-4 rounded-xl border border-inkline bg-inkcard p-4">
-        <summary className="cursor-pointer text-xs font-bold uppercase tracking-widest text-fg3">
-          🎯 Teaching detail (optional) — the more you add, the sharper the lesson
-        </summary>
-        <div className="mt-3 flex flex-col gap-3">
+            <PlanChip
+              label="Look on paper"
+              value={LESSON_DESIGNS.find((d) => d.id === design)?.label ?? "Dossier"}
+              wide
+            >
+              <select
+                className="field-input"
+                value={design}
+                onChange={(e) => setDesign(e.target.value)}
+              >
+                {LESSON_DESIGNS.map((d) => (
+                  <option key={d.id} value={d.id}>{d.label} — {d.blurb}</option>
+                ))}
+              </select>
+            </PlanChip>
+          </div>
+
+          {/* The anchor is a sentence, not a chip — it is the thing every page
+              in the pack has to agree with, so it is shown at full length. */}
+          <div className="mt-3.5 border-t border-inkline pt-3">
+            <label className="field-label" htmlFor="anchor">
+              {def.anchorLabel} — every page is built against this
+            </label>
+            <textarea
+              id="anchor"
+              value={resolution}
+              onChange={(e) => setResolution(e.target.value)}
+              rows={2}
+              placeholder={def.anchorPlaceholder}
+              className={`field-textarea !min-h-14 ${resolution.trim() ? "" : "!border-warn/60"}`}
+            />
+            {!ready && (
+              <p className="mt-1.5 text-[11.5px] text-warn">
+                {!skillFocus.trim() && !resolution.trim()
+                  ? `A skill focus and ${def.anchorLabel.toLowerCase()} are needed before building.`
+                  : !resolution.trim()
+                    ? `Add the ${def.anchorLabel.toLowerCase()} above — it anchors every page.`
+                    : "Add a skill focus — tap the chip above."}
+              </p>
+            )}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-inkline pt-3 text-[11.5px] text-fg3">
+            <span>
+              Cover: <strong className="font-semibold text-fg2">{coverTitle || "AI will name it"}</strong>
+            </span>
+            {series && <span>Series: <strong className="font-semibold text-fg2">{series}</strong></span>}
+            <div className="flex-1" />
+            <button
+              onClick={() => void create(undefined, true)}
+              disabled={working || !ready}
+              className="font-semibold text-fg3 transition-colors hover:text-fg1 disabled:opacity-40"
+            >
+              Skip the AI and write it myself
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Optional detail. Collapsed unless there's already something in it
+          or the planner has questions — then it opens on its own, because a
+          question nobody sees never gets answered. ── */}
+      <Disclosure
+        title="Add teaching detail"
+        note="What they already know, what they get wrong, what your room allows"
+        open={
+          clarifyingQuestions.length > 0 ||
+          !!(priorKnowledge || misconceptions || constraints)
+        }
+      >
+        <div className="flex flex-col gap-3.5">
+          {clarifyingQuestions.length > 0 && (
+            <div className="rounded-lg border border-brand/30 bg-brandsoft/40 px-3.5 py-3">
+              <p className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-brandink">
+                A few things that would sharpen this
+              </p>
+              <ul className="flex flex-col gap-1 text-[12.5px] leading-snug text-fg2">
+                {clarifyingQuestions.map((q, i) => (
+                  <li key={i} className="flex gap-1.5">
+                    <span aria-hidden className="text-brand2">·</span>
+                    {q}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <label className="block">
             <span className="field-label">What students already know</span>
             <textarea
               className="field-textarea !min-h-14"
               value={priorKnowledge}
               onChange={(e) => setPriorKnowledge(e.target.value)}
-              placeholder="e.g. They can already build a basic PEEL argument and know what a claim is. New to rebuttal."
+              placeholder="e.g. They can already build a basic PEEL argument. New to rebuttal."
             />
             <span className="mt-1 block text-[11px] text-fg3">
               Calibrates scaffolding and stops the AI re-teaching what they have.
             </span>
           </label>
           <label className="block">
-            <span className="field-label">Common mistakes & misconceptions to target</span>
+            <span className="field-label">Mistakes and misconceptions to target</span>
             <textarea
               className="field-textarea !min-h-14"
               value={misconceptions}
               onChange={(e) => setMisconceptions(e.target.value)}
-              placeholder="e.g. They just say 'I disagree' instead of attacking the reasoning; they confuse the claim with the evidence."
+              placeholder="e.g. They just say 'I disagree' instead of attacking the reasoning."
             />
             <span className="mt-1 block text-[11px] text-fg3">
-              The AI aims the drills, answer keys, and exit ticket straight at these.
+              The drills, answer keys and exit ticket aim straight at these.
             </span>
           </label>
           <label className="block">
@@ -524,72 +565,74 @@ export default function QuickBuildWizard({
               className="field-textarea !min-h-14"
               value={constraints}
               onChange={(e) => setConstraints(e.target.value)}
-              placeholder="e.g. 24 students, no printer, one shared screen, desks in fixed rows, 45 min only."
+              placeholder="e.g. 24 students, no printer, one shared screen, 45 min only."
             />
             <span className="mt-1 block text-[11px] text-fg3">
-              Keeps every activity actually runnable in your room.
+              Keeps every activity runnable in your actual room.
             </span>
           </label>
         </div>
-      </details>
+      </Disclosure>
 
-      {/* research & sources — the teacher's own material grounds the deck */}
+      {/* ── Sources. Only once there is an anchor to research. ── */}
       {resolution.trim() && (
-        <div className="mb-6 rounded-xl border border-inkline bg-inkcard p-4">
-          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs font-bold uppercase tracking-widest text-fg3">
-              📚 Source material & research
-            </span>
+        <Disclosure
+          title="Ground it in real sources"
+          note={`Paste your own, or have the AI suggest leads to verify`}
+          open={sourceMaterial.trim().length > 0 || leads.length > 0}
+        >
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="min-w-0 flex-1 text-[11.5px] text-fg3">
+              The {def.evidenceLabel.toLowerCase()} is built from these. Anything
+              you paste is used verbatim rather than invented.
+            </p>
             <button
-              onClick={research}
+              onClick={() => void research()}
               disabled={researching}
-              className="rounded-lg border border-accent/50 px-3 py-1.5 text-xs font-bold text-accent hover:bg-accent/10 disabled:opacity-40 transition-colors"
+              className="btn btn-secondary btn-sm shrink-0"
             >
               {researching ? "Researching…" : "Suggest sources"}
             </button>
           </div>
-          <p className="mb-2 text-[11px] text-fg3">
-            Paste real sources, quotes, or stats — the {def.evidenceLabel.toLowerCase()} is built
-            from these. Or let AI suggest leads to verify.
-          </p>
           <textarea
             value={sourceMaterial}
             onChange={(e) => setSourceMaterial(e.target.value)}
             rows={sourceMaterial ? 6 : 3}
             placeholder={`One source per line, e.g.\nOECD, "Universal Basic Income" policy brief (2017) — pilots didn't reliably raise employment · Limit: not a permanent nationwide UBI`}
-            className="w-full resize-y rounded-lg border border-inkline bg-inkmid px-3 py-2 text-xs text-fg1 outline-none placeholder:text-fg3 focus:border-accent/60"
+            className="field-textarea !min-h-16 text-[12.5px]"
           />
 
           {researchError && (
-            <p className="mt-2 text-[11px] text-danger">{researchError}</p>
+            <p className="mt-2 text-[11.5px] text-danger">{researchError}</p>
           )}
 
           {leads.length > 0 && (
             <div className="mt-3">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-[11px] font-bold uppercase tracking-widest text-warn">
-                  ⚠️ Leads to verify — confirm each before building
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-warn">
+                  Leads to verify — confirm each before building
                 </span>
                 <button
                   onClick={addAllLeads}
-                  className="text-[11px] font-bold text-accent hover:underline"
+                  className="text-[11.5px] font-semibold text-accent hover:underline"
                 >
-                  ＋ Add all
+                  Add all
                 </button>
               </div>
               <ul className="flex flex-col gap-2">
                 {leads.map((l, i) => (
-                  <li
-                    key={i}
-                    className="rounded-lg border border-inkline bg-inkmid p-2.5 text-xs"
-                  >
+                  <li key={i} className="rounded-lg border border-inkline bg-surface-alt/50 p-2.5 text-[12px]">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <span className="font-bold text-fg1">{l.institution}</span>
+                        <span className="font-semibold text-fg1">{l.institution}</span>
                         <span className="text-fg3"> · {l.likelyPublication} · {l.approxYear}</span>
                         <span
-                          className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-black text-white ${
-                            l.side === "con" ? "bg-danger" : l.side === "pro" ? "bg-ok" : "bg-fg2"
+                          className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+                            l.side === "con"
+                              ? "bg-danger/12 text-danger"
+                              : l.side === "pro"
+                                ? "bg-ok/12 text-ok"
+                                : "bg-surface-alt text-fg3"
                           }`}
                         >
                           {l.side}
@@ -597,68 +640,263 @@ export default function QuickBuildWizard({
                       </div>
                       <button
                         onClick={() => addLead(l)}
-                        className="shrink-0 rounded border border-accent/50 px-2 py-0.5 text-[11px] font-bold text-accent hover:bg-accent/10"
+                        className="shrink-0 rounded-md border border-inkline px-2 py-0.5 text-[11.5px] font-semibold text-fg2 hover:text-fg1"
                       >
-                        ＋ Add
+                        Add
                       </button>
                     </div>
                     <p className="mt-1 text-fg2">{l.claim}</p>
-                    <p className="mt-0.5 text-danger">⛔ {l.limit}</p>
-                    <p className="mt-0.5 text-fg3">🔎 {l.findHint}</p>
+                    <p className="mt-0.5 text-danger">Limit: {l.limit}</p>
+                    <p className="mt-0.5 text-fg3">Find it: {l.findHint}</p>
                   </li>
                 ))}
               </ul>
             </div>
           )}
-        </div>
+        </Disclosure>
       )}
 
-      {/*
-        The hand-setup path's own build buttons.
+      {/* ── The manual path. An escape hatch, not a second front door. ── */}
+      {!planned && (
+        <div>
+          <button
+            onClick={() => setShowManual((v) => !v)}
+            className="text-[12.5px] font-semibold text-fg3 transition-colors hover:text-fg1"
+          >
+            {showManual ? "Hide manual setup" : "Or set it up by hand instead →"}
+          </button>
 
-        These used to render ALWAYS, which put a second yellow primary ("Build
-        it with AI") directly under the box's own "Build my lesson" — two
-        equally-weighted calls to action for the same job, on the first screen a
-        new user sees. They belong to the manual path: shown once you've opened
-        the details or accepted a plan, and hidden while the one-box flow is all
-        that's on screen.
-      */}
-      {(showDetails || planned) && (
-        <>
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <button
-              onClick={() => { setMode("quick"); create(); }}
-              disabled={busy || !ready}
-              className="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {busy ? "Creating…" : "Build it with AI →"}
-            </button>
-            <button
-              onClick={() => { setMode("full"); create(); }}
-              disabled={busy || !ready}
-              className="rounded-lg border border-inkline px-4 py-3 text-sm font-bold text-fg2 hover:text-fg1 disabled:opacity-40 transition-colors"
-            >
-              Start blank instead
-            </button>
-          </div>
-          {!ready && (
-            <p className="mt-2 text-[11px] text-fg3">
-              {planned
-                ? `Needs a skill focus and ${def.anchorLabel.toLowerCase()} — fill them in above.`
-                : "Fill in a skill focus and the details above, or write a brief at the top and let the AI do it."}
-            </p>
+          {showManual && (
+            <div className="card mt-3 flex flex-col gap-4 p-4">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="block">
+                  <span className="field-label">Track</span>
+                  <select
+                    className="field-input"
+                    value={subject}
+                    onChange={(e) => {
+                      const s = e.target.value as Subject;
+                      setSubject(s);
+                      if (!typesForSubject(s).some((t) => t.id === type)) setType("lesson-pack");
+                      if (!formatsForSubject(s).some((f) => f.id === format)) setFormat("auto");
+                    }}
+                  >
+                    {SUBJECTS.map((s) => (
+                      <option key={s} value={s}>{SUBJECT_DEFS[s].label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="field-label">Lesson code</span>
+                  <input className="field-input" value={lessonCode} onChange={(e) => setLessonCode(e.target.value)} placeholder="L2" />
+                </label>
+                <label className="block">
+                  <span className="field-label">Series / cohort</span>
+                  <input className="field-input" value={series} onChange={(e) => setSeries(e.target.value)} placeholder="Novice Debate" />
+                </label>
+              </div>
+
+              {typesForSubject(subject).length > 1 && (
+                <label className="block">
+                  <span className="field-label">Content type</span>
+                  <select className="field-input" value={type} onChange={(e) => setType(e.target.value as ContentType)}>
+                    {typesForSubject(subject).map((t) => (
+                      <option key={t.id} value={t.id}>{t.label} · {t.scale}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="field-label">Skill focus</span>
+                  <input className="field-input" value={skillFocus} onChange={(e) => setSkillFocus(e.target.value)} placeholder="Rebuttal — attacking the warrant" />
+                </label>
+                <label className="block">
+                  <span className="field-label">Cover title</span>
+                  <input className="field-input" value={coverTitle} onChange={(e) => setCoverTitle(e.target.value)} placeholder="THE COUNTERPUNCH" />
+                </label>
+              </div>
+
+              <label className="block">
+                <span className="field-label">{def.anchorLabel} (anchors every page)</span>
+                <textarea className="field-textarea !min-h-14" value={resolution} onChange={(e) => setResolution(e.target.value)} placeholder={def.anchorPlaceholder} />
+              </label>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="block">
+                  <span className="field-label">Duration (min)</span>
+                  <input type="number" className="field-input" value={durationMin} onChange={(e) => setDurationMin(Math.max(30, Number(e.target.value) || 120))} />
+                </label>
+                <label className="block">
+                  <span className="field-label">Grade band</span>
+                  <select className="field-input" value={gradeBand} onChange={(e) => setGradeBand(e.target.value)}>
+                    {GRADE_BANDS.map((g) => <option key={g} value={g}>{g}</option>)}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="field-label">Rigor</span>
+                  <select className="field-input" value={rigorLevel} onChange={(e) => setRigorLevel(e.target.value as RigorLevel)}>
+                    {RIGOR_LEVELS.map((r) => <option key={r} value={r}>{RIGOR_DEFS[r].label}</option>)}
+                  </select>
+                </label>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="field-label">Lesson format</span>
+                  <select className="field-input" value={format} onChange={(e) => setFormat(e.target.value)}>
+                    {formats.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="field-label">Print design</span>
+                  <select className="field-input" value={design} onChange={(e) => setDesign(e.target.value)}>
+                    {LESSON_DESIGNS.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+                  </select>
+                </label>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 border-t border-inkline pt-3">
+                <button
+                  onClick={() => void create()}
+                  disabled={busy || !ready}
+                  className="btn btn-primary"
+                >
+                  {busy ? "Creating…" : "Build it with AI →"}
+                </button>
+                <button
+                  onClick={() => void create(undefined, true)}
+                  disabled={busy || !ready}
+                  className="btn btn-secondary"
+                >
+                  Start blank
+                </button>
+                {!ready && (
+                  <span className="text-[11.5px] text-fg3">
+                    Needs a skill focus and {def.anchorLabel.toLowerCase()}.
+                  </span>
+                )}
+              </div>
+            </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );
 }
 
-function Chip({ label, icon }: { label: string; icon?: string }) {
+/**
+ * A chip that IS the control for the thing it shows.
+ *
+ * Closed, it reads as a fact about the lesson. Open, it is the field. That
+ * equivalence is the point: the teacher never has to work out which form
+ * control corresponds to the chip they are looking at, because it is the same
+ * object.
+ */
+function PlanChip({
+  label,
+  value,
+  wide,
+  children,
+}: {
+  label: string;
+  value: string;
+  wide?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement | null>(null);
+
+  const close = useCallback(() => setOpen(false), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (wrap.current && !wrap.current.contains(e.target as Node)) close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, close]);
+
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-inkline bg-inkmid px-2.5 py-1 font-semibold text-fg1">
-      {icon && <span>{icon}</span>}
-      {label}
-    </span>
+    <div ref={wrap} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        /* CAPPED, because the AI's best answers are the long ones.
+           A precise skill focus — "Evidence analysis — distinguishing
+           statistical scope from claimed conclusion, and attacking the warrant
+           behind a card" — measured 829px and took a whole row to itself,
+           pushing the other seven chips onto a second line. The plan card is
+           the moment this product proves it understood the brief, and it was
+           being unbalanced by the very thing that proves it. The value
+           truncates; the full text is on hover and in the popover, which is
+           where it is edited anyway. */
+        title={`${label}: ${value}`}
+        className={`group inline-flex max-w-[17rem] items-baseline gap-1.5 rounded-full border px-3 py-1.5 text-[12.5px] transition-colors ${
+          open
+            ? "border-brand bg-brandsoft/60"
+            : "border-inkline bg-surface-alt/60 hover:border-line-strong"
+        }`}
+      >
+        <span className="shrink-0 text-[10.5px] font-bold uppercase tracking-wider text-fg3">
+          {label}
+        </span>
+        <span className="min-w-0 truncate font-semibold text-fg1">{value}</span>
+        <span
+          aria-hidden
+          className="shrink-0 text-[9px] text-fg3 transition-colors group-hover:text-fg1"
+        >
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div
+          className={`absolute left-0 top-full z-30 mt-1.5 rounded-xl border border-line-strong bg-surface p-2.5 shadow-[var(--elev-lg)] ${
+            wide ? "w-80" : "w-56"
+          }`}
+        >
+          <span className="field-label">{label}</span>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A titled, collapsed panel. Replaces the emoji-labelled <details> blocks. */
+function Disclosure({
+  title,
+  note,
+  open = false,
+  children,
+}: {
+  title: string;
+  note: string;
+  open?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className="card overflow-hidden [&[open]>summary]:border-b [&[open]>summary]:border-inkline" open={open}>
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3">
+        <span className="min-w-0 flex-1">
+          <span className="block text-[13px] font-semibold text-fg1">{title}</span>
+          <span className="block text-[11.5px] text-fg3">{note}</span>
+        </span>
+        <span aria-hidden className="shrink-0 text-[11px] text-fg3">
+          ＋
+        </span>
+      </summary>
+      <div className="p-4">{children}</div>
+    </details>
   );
 }

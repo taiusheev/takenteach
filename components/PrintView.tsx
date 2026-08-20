@@ -2,25 +2,26 @@
 
 import Link from "next/link";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { Activity, EvidenceCard, LessonPack, Scene } from "@/lib/lesson-pack-schema";
-import { StyleKitConfig } from "@/lib/db";
+import { Activity, EvidenceCard, Figure, LessonPack, Scene } from "@/lib/lesson-pack-schema";
 import { useMonoSafeText } from "@/lib/use-mono-safe";
 import DownloadMenu from "@/components/DownloadMenu";
 import CoverLogo from "@/components/CoverLogo";
 import { Subject, SUBJECT_DEFS, SubjectTheme } from "@/lib/subjects";
-import { resolveAccent } from "@/lib/style-kit";
+import { resolveAccent, type StyleKitConfig } from "@/lib/style-kit";
 import {
   LESSON_DESIGNS,
   lessonDesign,
   resolveDesign,
   usesNoviceHouse,
   usesEliteHouse,
+  usesJvHouse,
   LessonDesign,
 } from "@/lib/lesson-designs";
 import { sanitizeDesignCss } from "@/lib/sanitize-design";
 import { BASE_THEME_CSS } from "@/lib/print-theme";
-import { HOUSE_DESIGN_CSS, HOUSE_NOVICE_CSS, HOUSE_ELITE_CSS } from "@/lib/house-design";
+import { HOUSE_DESIGN_CSS, HOUSE_NOVICE_CSS, HOUSE_ELITE_CSS, HOUSE_JV_CSS } from "@/lib/house-design";
 import { classifyLayers } from "@/lib/argument-layers";
+import { coverGlyph, coverMotif, coverNumeral, coverSeed } from "@/lib/cover-art";
 import { compileDesign } from "@/lib/design/compile";
 /** the schema default — a pack still carrying it never had a colour chosen */
 const DEFAULT_ACCENT = "#0f766e";
@@ -64,6 +65,8 @@ export default function PrintView({
   const design = lessonDesign(designId);
   const stackRef = useRef<HTMLDivElement>(null);
   const [overfull, setOverfull] = useState<number[]>([]);
+  /* Cards no human has signed off — see the band below the toolbar. */
+  const unverifiedCards = (pack.evidenceCards ?? []).filter((c) => !c.verified);
   // These packs get photocopied for a class, and a pairing that reads on screen
   // can print as grey-on-grey. This proofs the mono output before anyone prints.
   const [monoProof, setMonoProof] = useState(false);
@@ -237,7 +240,7 @@ export default function PrintView({
    * unrelated colours. Its own accentColor still wins when set.
    */
   const compiled = compileDesign({
-    register: usesEliteHouse(design.id) ? "elite" : "novice",
+    register: usesJvHouse(design.id) ? "jv" : usesEliteHouse(design.id) ? "elite" : "novice",
     themeId: kit.themeId,
     // The seed is passed ONLY when someone deliberately chose it. A pack still
     // carrying the schema default was never given a colour, and should take its
@@ -291,6 +294,7 @@ export default function PrintView({
     // sheets against this, and the two silently disagreeing would mean pages
     // built for one floor and rescued against another.
     const FLOOR = SHRINK_FLOOR;
+    const HARD_FLOOR = CLIP_RESCUE_FLOOR;
     const fit = () => {
       // Scale the INNER content column (.pk-fit), never the A4 frame — so every
       // sheet stays the same size and only over-long content shrinks. NB: `zoom`
@@ -299,19 +303,42 @@ export default function PrintView({
       const fitters = Array.from(stack.querySelectorAll<HTMLElement>(".pk-fit"));
       fitters.forEach((el) => {
         el.style.zoom = "1";
+        el.parentElement?.removeAttribute("data-tight");
       });
       const over: number[] = [];
       fitters.forEach((el, i) => {
         const page = el.parentElement;
         if (!page) return;
-        const cs = getComputedStyle(page);
-        // the sheet's inner content box (A4 minus its padding)
-        const avail =
-          page.clientHeight -
-          parseFloat(cs.paddingTop) -
-          parseFloat(cs.paddingBottom);
+        /* Recomputed after each tightening step: level 2 changes the sheet's
+           own padding, so the space available is not a constant here. */
+        const availNow = () => {
+          const cs = getComputedStyle(page);
+          return (
+            page.clientHeight -
+            parseFloat(cs.paddingTop) -
+            parseFloat(cs.paddingBottom)
+          );
+        };
+        let avail = availNow();
         if (avail <= 0) return;
         let h = el.getBoundingClientRect().height;
+        if (h <= avail + 2) {
+          el.style.zoom = "1";
+          page.classList.remove("is-overfull");
+          return;
+        }
+
+        /* TIGHTEN FIRST — see the note in globals.css. On a real pack a third of
+           the overflow on the worst sheet was white space between blocks, and
+           removing white space costs a reader nothing while shrinking type costs
+           them the page. Only pages that are actually over get tightened, so a
+           comfortable sheet keeps its full rhythm. */
+        for (const level of ["1", "2"]) {
+          if (h <= avail + 2) break;
+          page.setAttribute("data-tight", level);
+          avail = availNow();
+          h = el.getBoundingClientRect().height;
+        }
         if (h <= avail + 2) {
           el.style.zoom = "1";
           page.classList.remove("is-overfull");
@@ -333,7 +360,30 @@ export default function PrintView({
           el.style.zoom = String(factor);
           h = el.getBoundingClientRect().height;
         }
-        const stillOver = h > avail + 2;
+
+        /* LAST RESORT — and the reason it exists is what happens without it.
+           `.print-page` is `overflow: hidden`, so a sheet that is still over at
+           the floor does not print small: it prints CLIPPED. The bottom of the
+           page is silently missing on paper, which on a student worksheet means
+           a prompt with no answer line, or an exit ticket cut in half.
+           Between type at 78% and content that does not exist, the type wins
+           every time. This is deliberately below the readability floor and
+           deliberately only reachable after tightening has already been spent —
+           and the page is still reported, so the author knows which sheet is
+           carrying too much and can cut it. */
+        if (h > avail + 2) {
+          for (let pass = 0; pass < 3 && h > avail + 2 && factor > HARD_FLOOR; pass++) {
+            factor = Math.max(HARD_FLOOR, factor * ((avail - 6) / h));
+            el.style.zoom = String(factor);
+            h = el.getBoundingClientRect().height;
+          }
+        }
+
+        /* Reported when the page needed rescuing below the readability floor,
+           not only when it still spills — a sheet printing at 78% is a sheet
+           whose content should be cut, and silence there is how a pack drifts
+           into being unreadable one page at a time. */
+        const stillOver = h > avail + 2 || factor < FLOOR - 0.001;
         page.classList.toggle("is-overfull", stillOver);
         if (stillOver) over.push(i + 1);
       });
@@ -403,6 +453,9 @@ export default function PrintView({
       {usesEliteHouse(design.id) && (
         <style dangerouslySetInnerHTML={{ __html: HOUSE_ELITE_CSS }} />
       )}
+      {usesJvHouse(design.id) && (
+        <style dangerouslySetInnerHTML={{ __html: HOUSE_JV_CSS }} />
+      )}
       {/* ── THE COMPILED TOKEN LAYER ──
           Every custom property the sheets above read is now COMPUTED, by a pure
           function of four inputs: the foundation (meaning — fixed), the register
@@ -425,7 +478,7 @@ export default function PrintView({
       {/* The design's remaining structural tokens, for the skins the compiler
           does not yet cover (dossier, neon, riso, blueprint). The two house
           registers set nothing here, so they take the compiled values whole. */}
-      {!usesNoviceHouse(design.id) && !usesEliteHouse(design.id) && (
+      {!usesNoviceHouse(design.id) && !usesEliteHouse(design.id) && !usesJvHouse(design.id) && (
         <style
           dangerouslySetInnerHTML={{
             __html: `.pk-root{${Object.entries(design.vars)
@@ -539,6 +592,38 @@ export default function PrintView({
         </div>
       )}
 
+      {/* ── THE LAST RESPONSIBLE MOMENT ──
+          Every citation in this pack was drafted by a model, and `verified` is
+          set only when a person has opened the source and seen the quotation.
+          Until now that fact lived in the editor's Sources panel, which is not
+          where anyone is standing when they hand thirty copies to a class — so
+          the one screen that could still stop an unchecked citation reaching
+          students said nothing about it. This is not a nag: it disappears the
+          moment the deck is signed off, and it names the count rather than
+          scolding. */}
+      {unverifiedCards.length > 0 && (
+        <div className="no-print flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-amber-500/40 bg-amber-500/10 px-5 py-2.5 text-xs text-amber-700">
+          <span>
+            <strong>
+              {unverifiedCards.length} of {pack.evidenceCards.length} source
+              {pack.evidenceCards.length === 1 ? "" : "s"}
+            </strong>{" "}
+            {unverifiedCards.length === 1 ? "has" : "have"} not been checked
+            against the real publication
+            {unverifiedCards.length <= 4 && (
+              <> — {unverifiedCards.map((c) => c.id || "?").join(", ")}</>
+            )}
+            . No AI can confirm a quotation exists; a person has to look.
+          </span>
+          <a
+            href={`/materials/${materialId}/edit`}
+            className="font-bold underline underline-offset-2"
+          >
+            Check them
+          </a>
+        </div>
+      )}
+
       <div
         ref={stackRef}
         className="print-stack flex flex-col items-center gap-10 bg-[#1e293b] py-10 print:bg-white print:py-0 print:gap-0"
@@ -567,7 +652,7 @@ export default function PrintView({
               />
               {i === evidenceAfter &&
                 evidencePages.map((cards, j) => (
-                  <EvidencePage key={j} pack={pack} kit={kit} cards={cards} pageNo={j + 1} evidenceLabel={def.evidenceLabel} />
+                  <EvidencePage key={j} pack={pack} kit={kit} cards={cards} pageNo={j + 1} evidenceLabel={def.evidenceLabel} design={design} />
                 ))}
             </div>
           ))}
@@ -575,7 +660,7 @@ export default function PrintView({
         {studentVisible &&
           evidenceAfter === -1 &&
           evidencePages.map((cards, j) => (
-            <EvidencePage key={j} pack={pack} kit={kit} cards={cards} pageNo={j + 1} evidenceLabel={def.evidenceLabel} />
+            <EvidencePage key={j} pack={pack} kit={kit} cards={cards} pageNo={j + 1} evidenceLabel={def.evidenceLabel} design={design} />
           ))}
 
         {teacherVisible && <TeacherGuidePage pack={pack} kit={kit} />}
@@ -721,11 +806,14 @@ function HeaderRow({
   title,
   badge,
   badgeColor,
+  code,
 }: {
   title: string;
   badge: string;
   /** a semantic colour (e.g. side green) overrides the design badge; omit for the design's own badge */
   badgeColor?: string;
+  /** the page's stable address ("L1-04"); rendered only where a design shows it */
+  code?: string;
 }) {
   return (
     <div className="pk-masthead pk-headrule mb-3 flex items-center justify-between gap-3 pb-1.5">
@@ -733,6 +821,13 @@ function HeaderRow({
           stylesheet, so while it was an inline prop a design system could fill
           the masthead with a band but had no way to lighten the title on it —
           #22 printed a near-black title on a navy band at 1.8:1, on 26 pages. */}
+      {/* Always emitted, shown only by registers that want it — a page code is
+          navigation furniture, and the novice look has no room for it. */}
+      {code && (
+        <span className="pk-pagecode shrink-0" style={monoFont}>
+          {code}
+        </span>
+      )}
       <h2 className="pk-title text-3xl">{title}</h2>
       {badge &&
         (badgeColor ? (
@@ -782,12 +877,31 @@ type CoverProps = {
  * the fix, and it belongs here rather than in one cover: all six read from
  * `coverFields`, so the balance is the same wherever the design lands.
  *
- * Nothing is lost. The mission and every criterion print in full in the teacher
- * guide, which is where a coach actually reads them.
+ * Nothing is lost — and that is now TRUE rather than merely asserted. This
+ * comment used to promise that "every criterion prints in full in the teacher
+ * guide"; a grep for `successCriteria` found exactly one use in this file, the
+ * cover, so the cap was silently discarding them. They are now genuinely on the
+ * teacher-guide page, uncapped, and off the cover entirely.
  */
 const COVER_MISSION_WORDS = 26;
-const COVER_MAX_CRITERIA = 4;
-const COVER_CRITERION_WORDS = 12;
+
+/**
+ * The two fields that had no cap, and were the two that overflowed.
+ *
+ * Measured on a real elite pack: the cover carried 1,044 characters and ran 7%
+ * past the sheet. The mission and the criteria were capped and behaved; the
+ * SKILL FOCUS came back at 131 characters ("Evidence analysis — distinguishing
+ * statistical scope from claimed conclusion, and attacking the warrant behind a
+ * card") and the SUBTITLE at 261. Both are model-written, neither had a bound,
+ * and a title page is the one sheet with no room to absorb a surprise — it is
+ * already carrying a glyph, a title, the resolution and a name box.
+ *
+ * The caps are deliberately tight, because a cover is a title page and not a
+ * summary. Nothing is lost: the full skill focus is on the library card and in
+ * the teacher guide, and the full subtitle is in the pack's own header.
+ */
+const COVER_SKILL_WORDS = 10;
+const COVER_SUBTITLE_WORDS = 18;
 
 /**
  * The single character that stands for a layer label.
@@ -824,15 +938,189 @@ function coverFields(pack: LessonPack) {
   return {
     num: (pack.lessonCode.replace(/^L/i, "") || "").padStart(2, "0") || "—",
     title: pack.title || "Untitled",
-    subtitle: pack.subtitle,
-    skill: pack.skillFocus,
+    subtitle: pack.subtitle ? capWords(pack.subtitle, COVER_SUBTITLE_WORDS) : "",
+    skill: pack.skillFocus ? capWords(pack.skillFocus, COVER_SKILL_WORDS) : "",
     resolution: pack.resolution || "No resolution set",
     mission: pack.mission ? capWords(pack.mission, COVER_MISSION_WORDS) : "",
     tagline: pack.coverTagline ?? "",
-    criteria: pack.successCriteria
-      .slice(0, COVER_MAX_CRITERIA)
-      .map((c) => capWords(c, COVER_CRITERION_WORDS)),
   };
+}
+
+/* ── THE COVER ART LAYER ──────────────────────────────────────────────────────
+   Why this is a separate, absolutely-positioned layer and not part of the
+   composition: a title page has no continuation sheet. Every other page in the
+   pack can be re-flowed or scaled by the fit pass; if the cover overflows, the
+   content at the bottom is simply gone, because `.print-page` is
+   `overflow: hidden`. Decoration is never worth that trade.
+
+   So none of it is laid out. The frame is absolutely positioned on the sheet;
+   the seal is absolutely positioned inside a flex spacer that only ever
+   consumes space the page already had spare. The fit pass measures `.pk-fit`
+   and neither can add a pixel to it, which makes the graphics structurally
+   incapable of pushing a cover off the paper rather than merely unlikely to.
+
+   Everything is derived (see lib/cover-art.ts), so it costs no tokens and no
+   cover can come back plain. */
+
+/* THE ELITE FRAME — page-level, because it is measured from the trim.
+   A double rule inset into the margin and four registration marks: the elite
+   cover is meant to be a quiet, institutional page, so it gets ruled geometry
+   rather than a motif with any weight. The A4 sheet is 794×1123 at 96dpi and
+   the viewBox matches it exactly, so these are page pixels. */
+function CoverFrame() {
+  return (
+    <svg
+      className="pk-cvr-art"
+      viewBox="0 0 794 1123"
+      aria-hidden="true"
+      focusable="false"
+      preserveAspectRatio="xMidYMid meet"
+    >
+      <g
+        style={{ color: "var(--pk-accent, #0f766e)" }}
+        fill="none"
+        stroke="currentColor"
+        opacity={0.28}
+        strokeWidth={1}
+      >
+        <rect x={26} y={26} width={742} height={1071} />
+        <rect x={32} y={32} width={730} height={1059} opacity={0.5} />
+        {[
+          [26, 26, 1, 1],
+          [768, 26, -1, 1],
+          [26, 1097, 1, -1],
+          [768, 1097, -1, -1],
+        ].map(([x, y, sx, sy], i) => (
+          <path key={i} d={`M${x} ${y + sy * 22}V${y}H${x + sx * 22}`} strokeWidth={2.5} />
+        ))}
+      </g>
+    </svg>
+  );
+}
+
+/* THE SEAL — the numbered motif, and the thing that fills the hole.
+   It draws in ITS OWN coordinate space, not the page's, and that is the whole
+   trick. It used to be page-positioned at a hard-coded y, which meant the
+   anchor had to be guessed against one pack's content height and re-guessed
+   whenever the composition moved. Now it is centred inside the lower spacer —
+   the void itself — so it re-centres on every pack automatically, however tall
+   that pack's title and cards turn out to be, with no coordinate to maintain.
+
+   620 tall so the widest ring (286 radius, 572 across) clears its own box. */
+function CoverSeal({ pack, variant }: { pack: LessonPack; variant: "novice" | "elite" }) {
+  const motif = coverMotif(pack);
+  const seed = coverSeed(pack);
+  const numeral = coverNumeral(pack.lessonCode);
+  const elite = variant === "elite";
+
+  // The ink. Novice draws in its own accent; elite in the pack accent, which is
+  // the same colour its rails already use.
+  const ink = elite ? "var(--pk-accent, #0f766e)" : "var(--n-accent, #0f766e)";
+
+  const cx = 397;
+  const cy = 310;
+
+  const rot = (seed % 7) - 3; // ±3°, so two adjacent lessons are not congruent
+
+  /* The ring radii start OUTSIDE the numeral and run past the trim on both
+     sides. The part that survives in the side gutters is the part the reader
+     sees; the rest is clipped by the sheet, which is what stops a centred
+     motif from reading as a logo stamped in the middle of the page. */
+  const rings = [152, 196, 240, 286];
+
+  return (
+    <svg
+      className="pk-cvr-seal"
+      viewBox="0 0 794 620"
+      aria-hidden="true"
+      focusable="false"
+      preserveAspectRatio="xMidYMid meet"
+    >
+      <g style={{ color: ink }} fill="none" stroke="currentColor">
+        {motif === "rays" && (
+          <g opacity={elite ? 0.09 : 0.13} strokeWidth={elite ? 1.5 : 2.5}>
+            {Array.from({ length: 24 }, (_, i) => {
+              const a = ((i * 360) / 24 + rot) * (Math.PI / 180);
+              const r0 = 150;
+              const r1 = r0 + (i % 2 ? 42 : 96);
+              return (
+                <line
+                  key={i}
+                  x1={cx + Math.cos(a) * r0}
+                  y1={cy + Math.sin(a) * r0}
+                  x2={cx + Math.cos(a) * r1}
+                  y2={cy + Math.sin(a) * r1}
+                  strokeLinecap="round"
+                />
+              );
+            })}
+          </g>
+        )}
+
+        {motif === "rings" && (
+          <g opacity={elite ? 0.1 : 0.14} strokeWidth={elite ? 1.5 : 2.5}>
+            {rings.map((r, i) => (
+              <circle key={r} cx={cx} cy={cy} r={r} strokeDasharray={i % 2 ? "6 12" : undefined} />
+            ))}
+          </g>
+        )}
+
+        {motif === "grid" && (
+          <g opacity={elite ? 0.11 : 0.15} strokeWidth={elite ? 1.5 : 2.5}>
+            {Array.from({ length: 44 }, (_, i) => {
+              const col = i % 11;
+              const row = Math.floor(i / 11);
+              const x = 44 + col * 71;
+              const y = cy - 168 + row * 112;
+              // The crosses clear the numeral's own box rather than colliding
+              // with it — the numeral is the object, this is the field it sits in.
+              if (Math.abs(x - cx) < 150 && Math.abs(y - cy) < 100) return null;
+              return <path key={i} d={`M${x - 7} ${y}H${x + 7}M${x} ${y - 7}V${y + 7}`} />;
+            })}
+          </g>
+        )}
+
+        {motif === "arcs" && (
+          <g opacity={elite ? 0.1 : 0.14} strokeWidth={elite ? 1.5 : 2.5}>
+            {rings.map((r) => (
+              <path
+                key={r}
+                d={`M${cx - r} ${cy} A${r} ${r} 0 0 1 ${cx} ${cy - r}`}
+                strokeLinecap="round"
+              />
+            ))}
+            {rings.map((r) => (
+              <path
+                key={`b${r}`}
+                d={`M${cx + r} ${cy} A${r} ${r} 0 0 1 ${cx} ${cy + r}`}
+                strokeLinecap="round"
+              />
+            ))}
+          </g>
+        )}
+
+        {/* THE GHOSTED NUMERAL, centred inside the motif rather than tucked in a
+            corner. Concentric with the rings it makes ONE object — a numbered
+            seal filling the void — where a numeral in the corner and a motif in
+            the middle would have been two weak ones. */}
+        {numeral && (
+          <text
+            className="pk-cvr-art-num"
+            x={cx}
+            y={cy}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={elite ? 230 : 200}
+            fill="currentColor"
+            stroke="none"
+            opacity={elite ? 0.07 : 0.09}
+          >
+            {numeral}
+          </text>
+        )}
+      </g>
+    </svg>
+  );
 }
 
 function CoverPage({
@@ -872,6 +1160,17 @@ function NoviceCover({ pack, kit, kitId, canEditKit, theme }: CoverProps) {
   const f = coverFields(pack);
   return (
     <div className="pk-cover pk-cover--novice print-page">
+      {/* ── THE COVER GOES THROUGH THE FIT PASS LIKE EVERY OTHER SHEET ──
+          It did not, and it was the only page in the pack that did not: the
+          fitter selects `.pk-fit`, and the cover had no such wrapper. So the one
+          sheet that can never be re-flowed — a title page has no continuation —
+          was also the one sheet nothing could measure or rescue, and an
+          over-long title, resolution or subtitle simply printed off the paper.
+          Measured on a real elite pack at 1.07 of the sheet.
+          `.pk-fit` is already `flex-direction: column; min-height: 100%`, which
+          is exactly the layout this cover relies on, so the `mt-auto` name box
+          still sits on the bottom edge. */}
+      <div className="pk-fit">
       {/* THE MASTHEAD BAR. His cover opens with a white slab, not a hairline
           kicker — 4px black border on a 4px offset shadow, holding the mark, the
           wordmark and the lesson tag. It is the single strongest object at the
@@ -897,12 +1196,34 @@ function NoviceCover({ pack, kit, kitId, canEditKit, theme }: CoverProps) {
       </div>
 
       <div className="flex flex-1 flex-col items-center text-center">
+        {/* ── WHERE THE SLACK GOES ────────────────────────────────────────
+            The composition used to hang off the masthead: content stacked
+            from the top, the name card pinned to the bottom by `mt-auto`,
+            and every spare pixel — 300 of them on a typical pack — dumped
+            into one hole underneath. The page read top-heavy because it was.
+
+            Two spacers split that slack 1:2 instead. The content drops by a
+            third of whatever is going spare, and the remaining two thirds
+            stay as the void the seal sits in. Both are `flex-grow` on a
+            zero-height box, which is the property that matters: they can
+            only ever consume space the sheet ALREADY had. On a full cover
+            they collapse to nothing and the layout is exactly what it was,
+            so this cannot be the reason a title page overflows. */}
+        <div className="pk-cvr-space" aria-hidden="true" />
+
         {/* The editorial line, then the topical glyph at 70px on a hard drop
-            shadow. Both are authored per lesson (coverTagline / coverIcon) —
-            they are what makes lesson 7 and lesson 8 different objects rather
-            than the same template with the words swapped. */}
+            shadow — the two devices that make lesson 7 and lesson 8 different
+            objects rather than the same template with the words swapped.
+
+            THE GLYPH IS NO LONGER GATED ON THE MODEL. It was `{pack.coverIcon
+            && …}`, and on a pack where the field came back empty the cover lost
+            its only picture and printed as stacked text blocks on ruled paper.
+            `coverGlyph` prefers the authored icon and derives a topical one
+            when there isn't one, so the slot is always filled. */}
         {f.tagline && <div className="pk-cvr-tagline">{f.tagline}</div>}
-        {pack.coverIcon && <div className="pk-cvr-hero">{pack.coverIcon}</div>}
+        <div className="pk-cvr-hero">
+          <span>{coverGlyph(pack)}</span>
+        </div>
 
         {/* One line, with a word carried in the accent. */}
         <h1 className="pk-cover-title" style={displayFont}>
@@ -943,23 +1264,28 @@ function NoviceCover({ pack, kit, kitId, canEditKit, theme }: CoverProps) {
           </div>
         )}
 
-        {f.criteria.length > 0 && (
-          <div className="pk-cover-criteria">
-            <div className="pk-criteria-label" style={monoFont}>
-              By the end of today I can…
-            </div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-left">
-              {f.criteria.map((c, i) => (
-                <div key={i} className="flex items-start gap-1.5">
-                  <span className="pk-cover-check shrink-0">→</span>
-                  {c}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* ── THE CRITERIA ARE NOT ON THE COVER ──
+            A title page has one job: say what this lesson is, in the two
+            seconds someone looks at it. It was carrying seven text blocks —
+            skill focus, title, subtitle, resolution, objective, four criteria
+            and a name card — measured at 1,044 characters and 7% past the
+            sheet, and the criteria alone were 341 of those characters and
+            200px of the height. Four of those blocks are the same statement at
+            four levels of detail, so the page said one thing four times and had
+            no room left to say it well.
+            They now print IN FULL and uncapped on the teacher guide, which is
+            where a coach reads the plan and where a comment in this file has
+            always claimed they were. The cover keeps what a reader actually
+            needs on it: the mark, the glyph, the title, the resolution, the
+            mission and somewhere to write their name. */}
 
-        <div className="pk-cover-name mt-auto w-full max-w-md">
+        {/* The void, and the seal centred in it. The spacer IS the hole, so
+            the art needs no page coordinate — it follows the composition. */}
+        <div className="pk-cvr-space pk-cvr-space--seal" aria-hidden="true">
+          <CoverSeal pack={pack} variant="novice" />
+        </div>
+
+        <div className="pk-cover-name w-full max-w-md">
           <div className="pk-cvr-tab" style={displayFont}>Classified debater file</div>
           <div className="pk-cvr-namecard">
             <label className="pk-cover-name-label" style={monoFont}>
@@ -977,6 +1303,7 @@ function NoviceCover({ pack, kit, kitId, canEditKit, theme }: CoverProps) {
         </div>
       </div>
       <Footer text={kit.footerText} />
+      </div>
     </div>
   );
 }
@@ -997,12 +1324,20 @@ function EliteCover({ pack, kit, kitId, canEditKit, theme }: CoverProps) {
   const f = coverFields(pack);
   return (
     <div className="pk-cover print-page">
+      <CoverFrame />
+      {/* Same fit wrapper as the novice cover — see the note there. */}
+      <div className="pk-fit">
       <div className="pk-cover-kicker flex items-center justify-between" style={monoFont}>
         <span>{kit.brand} · {theme.trackLabel}</span>
         <span>{kit.seriesLabel} · Lesson {f.num}</span>
       </div>
 
-      <div className="flex flex-1 flex-col items-center justify-center text-center">
+      {/* `justify-center` is gone: it centred the whole column as one block,
+          which left no gap the seal could occupy and no way to weight the
+          slack. The 1:2 spacers below do the same job with control — see the
+          note on the novice cover. */}
+      <div className="flex flex-1 flex-col items-center text-center">
+        <div className="pk-cvr-space" aria-hidden="true" />
         <CoverLogo
           kitId={kitId}
           brand={kit.brand}
@@ -1033,25 +1368,14 @@ function EliteCover({ pack, kit, kitId, canEditKit, theme }: CoverProps) {
           </div>
         )}
 
-        {f.criteria.length > 0 && (
-          <div className="pk-cover-criteria">
-            <div className="pk-criteria-label" style={monoFont}>
-              By the end of this lesson you can
-            </div>
-            <div className="grid grid-cols-2 gap-x-7 gap-y-1.5 text-left">
-              {f.criteria.map((c, i) => (
-                <div key={i} className="flex items-start gap-2">
-                  <span className="pk-cover-check shrink-0" style={monoFont}>
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  {c}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Off the cover for the same reason as the novice one above — they
+            print in full on the teacher guide. */}
 
-        <div className="pk-cover-name mt-auto">
+        <div className="pk-cvr-space pk-cvr-space--seal" aria-hidden="true">
+          <CoverSeal pack={pack} variant="elite" />
+        </div>
+
+        <div className="pk-cover-name">
           <div className="grid flex-1 grid-cols-2 gap-8 text-left">
             <div>
               <div className="pk-cover-name-label" style={monoFont}>Name</div>
@@ -1065,6 +1389,7 @@ function EliteCover({ pack, kit, kitId, canEditKit, theme }: CoverProps) {
         </div>
       </div>
       <Footer text={kit.footerText} />
+      </div>
     </div>
   );
 }
@@ -1346,6 +1671,27 @@ const PAGE_CONTENT_BUDGET = 1000;
 const SHRINK_FLOOR = 0.85;
 
 /**
+ * The absolute smallest a sheet may be scaled, used only to avoid CLIPPING.
+ *
+ * .print-page is overflow:hidden, so a page still over at SHRINK_FLOOR does not
+ * print small — it prints with its bottom missing. 0.72 of the 10pt body floor
+ * is about 7.2pt: tight, still legible, and unambiguously better than a
+ * worksheet whose last prompt has no answer line. Any page that reaches this is
+ * flagged, because the real fix is to cut its content.
+ *
+ * WHY 0.72 AND NOT 0.78. Measured on a real pack: the elite "Full Autopsy"
+ * sheet carries a 402px chain block, a 341px block and a ballot into a 1092px
+ * column, and at 0.78 it was still 3% over — so it printed clipped. The floor
+ * was set where legibility gets uncomfortable, but that is the wrong thing to
+ * optimise at this rung: by the time a page is here the choice is not "small
+ * type or comfortable type", it is "small type or missing content". Six points
+ * of extra headroom cost about half a point of type on the rare page that
+ * needs it, and buy back the bottom of the sheet. The flag still fires, so the
+ * author is still told the page wants cutting.
+ */
+const CLIP_RESCUE_FLOOR = 0.72;
+
+/**
  * How much OVER the comfortable budget a sheet may be packed.
  *
  * This is the packer's tolerance for its own estimate error. It is NOT
@@ -1572,6 +1918,64 @@ function ActivityPage({
         </div>
       );
 
+  /* WHICH TOPIC THIS PAGE RUNS ON — see `practiceTopic` on the pack.
+     A page teaching the skill on the easy topic must SAY so, or a student
+     reasonably assumes every page is about the resolution on the cover and
+     writes about the wrong thing. And the handover — the first anchor page
+     after the practice pages — is the pedagogical moment of the whole
+     architecture, so it is marked rather than left to be inferred. Both bands
+     are derived from data already on the pack; neither is authored. */
+  if (pack.practiceTopic?.trim()) {
+    const idx = pack.activities.indexOf(activity);
+    const lastPractice = pack.activities.reduce(
+      (last, a, i) => (a.runsOn === "practice" ? i : last),
+      -1
+    );
+    if (activity.runsOn === "practice")
+      push(
+        "topic-band",
+        44,
+        <div className="pk-topicband pk-topicband--practice avoid-break mb-3 rounded-lg px-3 py-1.5">
+          <p className="text-[10px] font-black uppercase tracking-widest" style={monoFont}>
+            Practice topic
+          </p>
+          <p className="text-[11px] font-semibold leading-snug">{pack.practiceTopic}</p>
+        </div>
+      );
+    else if (lastPractice >= 0 && idx === lastPractice + 1)
+      push(
+        "topic-band",
+        48,
+        <div className="pk-topicband pk-topicband--handover avoid-break mb-3 rounded-lg px-3 py-1.5">
+          <p className="text-[10px] font-black uppercase tracking-widest" style={monoFont}>
+            Same skill, real topic from here
+          </p>
+          <p className="text-[11px] font-semibold leading-snug">{pack.resolution}</p>
+        </div>
+      );
+  }
+
+  /* WHY THIS PAGE EXISTS — student-facing, see the schema.
+     Pushed immediately after the instruction banner so it lands on the FIRST
+     sheet when a long page packs into two: the reason to care is worthless on
+     the continuation sheet, which a student reaches only after deciding to
+     carry on. Deliberately quiet — a hairline rail and small caps, not another
+     tinted banner competing with the instruction above it. */
+  if (activity.whyItMatters)
+    push(
+      "why",
+      46,
+      <div className="pk-why avoid-break mb-3 border-l-2 pl-2.5">
+        <p
+          className="pk-why-label text-[10px] font-black uppercase tracking-widest"
+          style={monoFont}
+        >
+          Why this page
+        </p>
+        <p className="pk-why-text text-[11px] leading-snug">{activity.whyItMatters}</p>
+      </div>
+    );
+
   if (hasScene)
     push(
       "scene",
@@ -1643,7 +2047,13 @@ function ActivityPage({
 
     push(
       "example",
-      34 + activity.exampleLayers.length * 52,
+      /* 52 per layer, plus 15 for any layer carrying a pass condition — that
+         line is a rule, a small-caps label and a wrapped sentence, and leaving
+         it out of the estimate is how a four-layer model silently overshoots
+         its sheet by ~60px and lands on the shrink floor. */
+      34 +
+        activity.exampleLayers.length * 52 +
+        activity.exampleLayers.filter((l) => l.passesWhen?.trim()).length * 15,
         <div className="avoid-break mb-3 overflow-hidden pk-box">
           <div className="pk-section-label pk-bar px-3 py-1 text-[11px] font-bold tracking-widest">
             WORKED EXAMPLE — STUDY EVERY LAYER
@@ -1670,6 +2080,18 @@ function ActivityPage({
                   <span className="pk-layer-name">{l.label}</span>
                   <p className="pk-layer-text">{l.text}</p>
                   {l.note && <p className="pk-layer-note">{l.note}</p>}
+                  {/* The pass condition is the student's own test on their own
+                      sentence, so it prints on the student copy — unlike the
+                      note above it, which annotates the model for whoever is
+                      reading it. Kept visually distinct for that reason. */}
+                  {l.passesWhen?.trim() && (
+                    <p className="pk-layer-passes">
+                      <span className="pk-layer-passes-label" style={monoFont}>
+                        Passes when
+                      </span>{" "}
+                      {l.passesWhen}
+                    </p>
+                  )}
                 </div>
               </div>
             ))}
@@ -1859,10 +2281,20 @@ function ActivityPage({
       )
     );
 
-  activity.prompts.forEach((p, i) =>
+  activity.prompts.forEach((p, i) => {
+    /* THE COACHING LINE — see promptSchema. `guide` and `trap` are the
+       student's half of what used to sit entirely inside `expectedAnswer`,
+       and they print at the point of writing rather than in the key.
+
+       Deliberately NOT `.answer-key`: that class is display:none under
+       `.answers-hidden`, which is exactly how the expected answer stays off
+       the student copy. These two must survive that toggle — a student
+       holding the sheet is the whole audience for them. */
+    const guide = p.guide?.trim();
+    const trap = p.trap?.trim();
     push(
       `prompt-${i}`,
-      175,
+      175 + (guide ? 17 : 0) + (trap ? 17 : 0),
         <div
           className={`pk-prompt pk-prompt--${p.side} avoid-break mb-3 rounded-2xl p-3.5`}
         >
@@ -1876,10 +2308,30 @@ function ActivityPage({
             )}
             <span className="pk-prompt-label font-bold text-gray-900">{p.label}</span>
           </div>
+          {(guide || trap) && (
+            <div className="pk-coach mb-2 flex flex-col gap-0.5">
+              {guide && (
+                <p className="pk-coach-row pk-coach-row--do text-[11px] leading-snug">
+                  <span className="pk-coach-tag font-black uppercase tracking-widest">
+                    Include
+                  </span>{" "}
+                  {guide}
+                </p>
+              )}
+              {trap && (
+                <p className="pk-coach-row pk-coach-row--dont text-[11px] leading-snug">
+                  <span className="pk-coach-tag font-black uppercase tracking-widest">
+                    Don&rsquo;t
+                  </span>{" "}
+                  {trap}
+                </p>
+              )}
+            </div>
+          )}
           <WriteArea expectedAnswer={p.expectedAnswer} />
         </div>
-    )
-  );
+    );
+  });
 
   // The matched Pro/Con architectures — each side's chain, mechanism by
   // mechanism, so a student handed either side knows the whole line of argument
@@ -2179,6 +2631,188 @@ function ActivityPage({
     );
   }
 
+  /* FIGURES — see figureSchema.
+     Drawn in HTML and CSS rather than SVG, deliberately. A figure built from
+     divs inherits the register's own tokens, so the same pictogram is ink on
+     the JV sheet and the accent triad on the novice one without a second
+     drawing; it reflows when the fit pass scales a page; and it degrades to
+     outlined boxes on a photocopier, where a flat SVG fill turns to mud.
+
+     `exact` prints under every drawing that carries one. He rounds for the
+     picture and states the truth beneath it, and a pack that rounds silently
+     teaches the habit the lesson is trying to break. */
+  activity.figures.forEach((f, i) => {
+    const est =
+      f.kind === "unit-chart"
+        ? 96 + (f.thenFilled != null ? 62 : 0)
+        : f.kind === "process-flow"
+          ? 60 + Math.ceil(f.stages.length / 3) * 30
+          : f.kind === "ratio"
+            ? 96
+            : 74 + Math.max(f.brings.length, f.costs.length) * 30;
+    push(
+      `figure-${i}`,
+      est + (f.exact ? 16 : 0) + (f.caption ? 16 : 0) + (f.source ? 14 : 0),
+      <div className="pk-figure avoid-break mb-3 overflow-hidden pk-box">
+        {f.title && (
+          <div className="pk-section-label pk-bar px-3 py-1 text-[11px] font-bold tracking-widest">
+            {f.title}
+          </div>
+        )}
+        <div className="bg-white px-3 py-2.5">
+          {f.kind === "unit-chart" && <UnitChart f={f} />}
+          {f.kind === "process-flow" && <ProcessFlow f={f} />}
+          {f.kind === "ratio" && <RatioFigure f={f} />}
+          {f.kind === "balance" && <BalanceFigure f={f} />}
+
+          {f.caption && <p className="pk-fig-caption mt-2 text-[11px] leading-snug">{f.caption}</p>}
+          {f.exact && (
+            <p className="pk-fig-exact mt-1 text-[10px] leading-snug">
+              <span className="font-black uppercase tracking-widest" style={monoFont}>
+                Exact
+              </span>{" "}
+              {f.exact}
+            </p>
+          )}
+          {f.source && (
+            <p className="pk-fig-source mt-1 text-[9px]" style={monoFont}>
+              {f.source}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  });
+
+  /* CARDS WITH JOBS — see cardJobSchema.
+     The card itself lives on the evidence sheet; this is the assignment, on the
+     page where the work happens. Rendering the whole card again here would put
+     the same paraphrase on two sheets and spend the reading budget twice, and
+     the student has the deck in front of them.
+     The write area is sized `sm` deliberately: a speech line, a limit and a
+     weigh are each one sentence, and a box that invites a paragraph miscoaches
+     exactly the way an oversized box does anywhere else. */
+  if (activity.cardJobs.length > 0)
+    push(
+      "card-jobs",
+      40 + activity.cardJobs.length * 78,
+      <div className="pk-cardjobs avoid-break mb-3 overflow-hidden pk-box">
+        <div className="pk-section-label pk-bar px-3 py-1 text-[11px] font-bold tracking-widest">
+          ONE JOB PER CARD — IN THIS ORDER
+        </div>
+        <div className="flex flex-col bg-white">
+          {activity.cardJobs.map((j, i) => (
+            <div key={i} className="pk-cardjob px-3 py-2">
+              <div className="mb-1 flex items-baseline gap-2">
+                <span className="pk-cardjob-id shrink-0 rounded px-1.5 py-0.5 text-[11px] font-black" style={monoFont}>
+                  Card {j.cardId}
+                </span>
+                <span className="pk-cardjob-name text-[11px] font-black uppercase tracking-widest">
+                  {j.job}
+                </span>
+              </div>
+              {j.instruction && (
+                <p className="pk-cardjob-instruction mb-1 text-[11px] leading-snug">{j.instruction}</p>
+              )}
+              <WriteArea expectedAnswer="" size="sm" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+
+  /* THE EXIT BALLOT — see exitBallotSchema.
+     Printed in the order the room moves through it: a partner marks the rows,
+     the speaker names the error, picks the repair, and rewrites. The rewrite
+     box is deliberately the largest thing on the block, because it is the only
+     part the student takes away. */
+  {
+    const bal = activity.exitBallot;
+    const hasBallot = (bal?.rows?.length ?? 0) > 0;
+    if (hasBallot) {
+      const scale = bal!.scale?.length ? bal!.scale : ["Yes", "Almost", "Not yet"];
+      push(
+        "exit-ballot",
+        64 +
+          bal!.rows.length * 34 +
+          (bal!.errors.length || bal!.repairs.length ? 30 + Math.max(bal!.errors.length, bal!.repairs.length) * 13 : 0) +
+          64,
+        <div className="pk-ballot avoid-break mb-3 overflow-hidden pk-box">
+          <div className="pk-section-label pk-bar px-3 py-1 text-[11px] font-bold tracking-widest">
+            PARTNER BALLOT — MARK EVERY ROW
+          </div>
+          <table className="w-full border-collapse bg-white">
+            <thead>
+              <tr>
+                <th className="pk-ballot-h px-2 py-1 text-left text-[10px] font-black uppercase tracking-widest">
+                  The test
+                </th>
+                {scale.map((s) => (
+                  <th
+                    key={s}
+                    className="pk-ballot-h w-[14%] px-1 py-1 text-center text-[10px] font-black uppercase tracking-widest"
+                  >
+                    {s}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {bal!.rows.map((r, i) => (
+                <tr key={i} className="pk-ballot-row">
+                  <td className="px-2 py-1.5 align-top">
+                    <span className="text-[11px] font-bold">{r.criterion}</span>
+                    {r.test && (
+                      <span className="pk-ballot-test block text-[10px] leading-snug">{r.test}</span>
+                    )}
+                  </td>
+                  {scale.map((s) => (
+                    <td key={s} className="px-1 py-1.5 text-center align-middle">
+                      <span className="pk-ballot-box inline-block h-3 w-3 rounded-[2px]" />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {(bal!.errors.length > 0 || bal!.repairs.length > 0) && (
+            <div className="grid grid-cols-2 gap-3 bg-white px-3 py-2">
+              <div>
+                <p className="pk-ballot-h mb-1 text-[10px] font-black uppercase tracking-widest">
+                  What went wrong — mark one
+                </p>
+                {bal!.errors.map((e, i) => (
+                  <p key={i} className="mb-0.5 flex items-start gap-1.5 text-[10.5px] leading-snug">
+                    <span className="pk-ballot-box mt-[2px] inline-block h-3 w-3 shrink-0 rounded-[2px]" />
+                    {e}
+                  </p>
+                ))}
+              </div>
+              <div>
+                <p className="pk-ballot-h mb-1 text-[10px] font-black uppercase tracking-widest">
+                  How I will fix it — circle one
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {bal!.repairs.map((r, i) => (
+                    <span key={i} className="pk-ballot-move rounded-[2px] px-1.5 py-0.5 text-[10px] font-semibold">
+                      {r}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          <div className="bg-white px-3 pb-2">
+            <p className="pk-ballot-h mb-1 text-[10px] font-black uppercase tracking-widest">
+              The rewrite{bal!.product ? ` — ${bal!.product}` : ""}
+            </p>
+            <WriteArea expectedAnswer="" size="lg" />
+          </div>
+        </div>
+      );
+    }
+  }
+
   // What the first student to finish does next. Printed before the oral task so
   // the page reads in the order the room actually moves through it.
   if (activity.fastFinisher)
@@ -2210,16 +2844,39 @@ function ActivityPage({
 
   const title = activity.title || activity.kind.toUpperCase();
   const pages = packIntoPages(blocks);
+  /* THE PAGE CODE — a stable address other pages can cite ("see L1-04").
+     Derived, never authored: an authored code drifts the moment a page is
+     inserted, and the founder's packs use the code far more than the title
+     when they cross-reference ("You will check this again on page 13"). */
+  const pageCode = `${(pack.lessonCode || "L").toUpperCase()}-${String(
+    pack.activities.indexOf(activity) + 1
+  ).padStart(2, "0")}`;
 
   return (
     <>
       {pages.map((pageBlocks, pi) => (
-        <Sheet className={`pk-page ${pageFamily(activity.kind)}`} key={pi}>
+        <Sheet
+          /* `pk-page--jv` is what turns the flat block list into the two-column
+             sheet the JV register wants; every other register ignores it. */
+          className={`pk-page ${pageFamily(activity.kind)}${
+            usesJvHouse(design.id) ? " pk-page--jv" : ""
+          }`}
+          key={pi}
+        >
           <HeaderRow
+            code={pageCode}
             title={pi === 0 ? title : `${title} (cont.)`}
+            /* An optional page says so in its own badge. A cut path has to be
+               readable at the moment it is needed, and at minute sixty a coach
+               is fanning through paper — not consulting the teacher guide. */
             badge={
               pi === 0
-                ? activity.badge || (activity.durationMin ? `${activity.durationMin} MIN` : "")
+                ? [
+                    activity.optional ? "IF TIME" : "",
+                    activity.badge || (activity.durationMin ? `${activity.durationMin} MIN` : ""),
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
                 : `${pi + 1} / ${pages.length}`
             }
           />
@@ -2237,21 +2894,132 @@ function ActivityPage({
 
 // ── Evidence deck page ───────────────────────────────────────────────────────
 
+/* ── THE FOUR FIGURES ────────────────────────────────────────────────────────
+   Each is a plain composition of divs so the register's tokens reach it. None
+   takes a colour of its own: a figure on a JV sheet is ink, and on a novice
+   sheet it is the accent, because both read `--pk-fig-*` from the stylesheet
+   rather than deciding for themselves. */
+
+/** N of M as a grid of small boxes, optionally over two series. */
+function UnitChart({ f }: { f: Figure }) {
+  const total = Math.max(1, Math.min(f.total, 400));
+  const row = (n: number, label: string, tone: "then" | "now") => (
+    <div className="pk-unitrow">
+      <div className="pk-unitgrid" aria-hidden>
+        {Array.from({ length: total }, (_, i) => (
+          <span
+            key={i}
+            className={`pk-unit ${i < n ? `pk-unit--on pk-unit--${tone}` : "pk-unit--off"}`}
+          />
+        ))}
+      </div>
+      <div className="pk-unitmeta">
+        <span className="pk-unitnum" style={monoFont}>
+          {n}
+          <span className="pk-unitof">/{total}</span>
+        </span>
+        {label && <span className="pk-unitlabel">{label}</span>}
+      </div>
+    </div>
+  );
+  return (
+    <div className="pk-unitchart">
+      {f.thenFilled != null && row(f.thenFilled, f.thenLabel, "then")}
+      {row(f.filled, f.nowLabel, "now")}
+    </div>
+  );
+}
+
+/** Ordered stages along a line — his "follow the thick line from left to right". */
+function ProcessFlow({ f }: { f: Figure }) {
+  return (
+    <ol className="pk-flowline">
+      {f.stages.map((s, i) => (
+        <li key={i} className="pk-flowstage">
+          <span className="pk-flownum" style={monoFont}>
+            {i + 1}
+          </span>
+          <span className="pk-flowtext">{s}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** Two magnitudes, and how many of one make the other. */
+function RatioFigure({ f }: { f: Figure }) {
+  const n = Math.max(1, Math.min(f.ratioCount ?? 1, 20));
+  return (
+    <div className="pk-ratio">
+      <div className="pk-ratio-side">
+        <div className="pk-ratio-marks" aria-hidden>
+          {Array.from({ length: n }, (_, i) => (
+            <span key={i} className="pk-ratio-mark pk-ratio-mark--small" />
+          ))}
+        </div>
+        <p className="pk-ratio-label">{f.ratioLeft}</p>
+      </div>
+      <span className="pk-ratio-eq" style={monoFont} aria-hidden>
+        =
+      </span>
+      <div className="pk-ratio-side">
+        <div className="pk-ratio-marks" aria-hidden>
+          <span className="pk-ratio-mark pk-ratio-mark--big" />
+        </div>
+        <p className="pk-ratio-label">{f.ratioRight}</p>
+      </div>
+    </div>
+  );
+}
+
+/** One subject, what it brings on one side and what it costs on the other. */
+function BalanceFigure({ f }: { f: Figure }) {
+  const col = (label: string, items: Figure["brings"], tone: "brings" | "costs") => (
+    <div className={`pk-balance-col pk-balance-col--${tone}`}>
+      <p className="pk-balance-head text-[10px] font-black uppercase tracking-widest" style={monoFont}>
+        {label}
+      </p>
+      {items.map((it, i) => (
+        <div key={i} className="pk-balance-item">
+          <span className="pk-balance-item-head">{it.head}</span>
+          {it.detail && <span className="pk-balance-item-detail">{it.detail}</span>}
+        </div>
+      ))}
+    </div>
+  );
+  return (
+    <div className="pk-balance">
+      {col(f.bringsLabel, f.brings, "brings")}
+      {f.subject && (
+        <div className="pk-balance-subject">
+          <span>{f.subject}</span>
+        </div>
+      )}
+      {col(f.costsLabel, f.costs, "costs")}
+    </div>
+  );
+}
+
 function EvidencePage({
   pack,
   kit,
   cards,
   pageNo,
   evidenceLabel,
+  design,
 }: {
   pack: LessonPack;
   kit: StyleKitConfig;
   cards: EvidenceCard[];
   pageNo: number;
   evidenceLabel: string;
+  design: LessonDesign;
 }) {
   return (
-    <Sheet className="pk-page">
+    /* The deck is a student sheet like any other, so it wears the register.
+       It was the one page that did not, which on the JV look printed an
+       un-railed sheet in the middle of railed ones. */
+    <Sheet className={`pk-page${usesJvHouse(design.id) ? " pk-page--jv" : ""}`}>
       <HeaderRow
         title={evidenceLabel.toUpperCase()}
         badge={`CARDS ${cards.map((c) => c.id).join(" & ")}`}
@@ -2400,6 +3168,35 @@ function TeacherGuidePage({ pack, kit }: { pack: LessonPack; kit: StyleKitConfig
     </div>
   );
 
+  /* THE SUCCESS CRITERIA, IN FULL AND UNCAPPED.
+     They used to print in exactly one place — the cover — where they were the
+     largest block on the sheet (341 characters, 200px on a real pack) and were
+     truncated to four items of twelve words to make them fit. A comment above
+     `coverFields` claimed they "print in full in the teacher guide"; they did
+     not, so the cap was quietly losing them.
+     Here they are complete, on the page a coach actually reads before the bell,
+     which is what frees the cover to be a title page. */
+  if (pack.successCriteria.length > 0)
+    push(
+      "criteria",
+      70 + pack.successCriteria.length * 26,
+      <div className="mb-3 rounded-lg border-2 border-slate-400 bg-slate-50 p-2.5 text-xs">
+        <div className="mb-1.5 font-black tracking-wide text-slate-800" style={monoFont}>
+          BY THE END OF THIS LESSON, STUDENTS CAN
+        </div>
+        <ol className="flex flex-col gap-1">
+          {pack.successCriteria.map((c, i) => (
+            <li key={i} className="flex items-start gap-2 leading-snug text-slate-700">
+              <span className="shrink-0 font-black text-slate-500" style={monoFont}>
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              <span className="min-w-0">{c}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+    );
+
   if (g.materialsChecklist)
     push(
       "materials",
@@ -2477,6 +3274,19 @@ function TeacherGuidePage({ pack, kit }: { pack: LessonPack; kit: StyleKitConfig
       </div>
     )
   );
+
+  // Distinct from a page's own fastFinisher (one student, while the room
+  // catches up): this is the whole-class call when the lesson runs faster
+  // than planned. Sits beside the timing plan for the same reason pitfalls
+  // sits beside it — both are read in the seconds before the bell.
+  if (g.ifAheadOfSchedule)
+    push(
+      "ahead-of-schedule",
+      90,
+      <div className="pk-pitfalls mb-3 rounded-lg border-2 border-emerald-500 bg-emerald-50 p-2 text-xs">
+        <strong>IF YOU&apos;RE AHEAD OF SCHEDULE:</strong> {g.ifAheadOfSchedule}
+      </div>
+    );
 
   // The run-sheet for the two adults in the room. Printed as a row per page so
   // a lead and an assistant can each find their own column mid-lesson.

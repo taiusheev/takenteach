@@ -79,11 +79,47 @@ export type VocabTerm = z.infer<typeof vocabTermSchema>;
 /**
  * A prompt a student writes into, with the teacher-facing expected answer
  * (drives the answer key / toggle-answers behaviour of the packs).
+ *
+ * ── WHY THIS CARRIES STUDENT-FACING COACHING ───────────────────────────────
+ * `expectedAnswer` was doing four jobs at once: the answer key, the model
+ * answer, the warning about the usual wrong move, and the coaching that tells
+ * a student what belongs in the box. Three of those four are addressed to the
+ * STUDENT — and the field is teacher-only, hidden behind the answer-key
+ * toggle. So a page that already contained the intelligence printed a student
+ * a label and a blank, and the coach had to narrate the key aloud, page by
+ * page, to run the lesson at all.
+ *
+ * `guide` and `trap` are the student's half, split out and printed at the
+ * point of writing. They are NOT a second copy of the expected answer, and
+ * the distinction is the whole point:
+ *
+ *   guide           PROSPECTIVE, to the student — what to put in, before they
+ *                   write. "Name the side, then one thing you want believed."
+ *   trap            PROSPECTIVE, to the student — the specific wrong move made
+ *                   here. "Do not restate the Point in new words."
+ *   expectedAnswer  RETROSPECTIVE, to the teacher — what a right answer looks
+ *                   like, for marking and for the cold-call debrief.
+ *
+ * Both are short by design. The reading budget on a page is the binding
+ * constraint (see `studentReadWords`), so these earn their place only while
+ * they stay one line each; the checklist holds them to it.
  */
 export const promptSchema = z.object({
   label: z.string(), // e.g. "Why SHOULD Asia-Pacific governments give people regular cash?"
   side: z.enum(SIDES).default("neutral"),
   expectedAnswer: z.string(), // data-answer equivalent; answer-key source
+  /**
+   * STUDENT-FACING. What to put in this answer, read before writing — the
+   * move, not the answer. Prints on the student copy; never hidden by the
+   * answer-key toggle. One line.
+   */
+  guide: z.string().optional().default(""),
+  /**
+   * STUDENT-FACING. The specific wrong move students make in THIS box, stated
+   * so it can be checked against their own sentence. Prints on the student
+   * copy. One line. Empty where a page has no characteristic failure.
+   */
+  trap: z.string().optional().default(""),
 });
 export type Prompt = z.infer<typeof promptSchema>;
 
@@ -114,6 +150,32 @@ export const exampleLayerSchema = z.object({
   label: z.string(), // "POINT", "EVIDENCE", "TOPIC SENTENCE", …
   text: z.string(), // the model text for that layer
   note: z.string().optional().default(""), // annotation: why this works
+  /**
+   * THE PASS CONDITION — an observable test a student runs on their OWN
+   * sentence, printed beside the layer it belongs to.
+   *
+   * The founder's pack does not merely define the four jobs of an argument; it
+   * gives each one a test, and each test is a different SHAPE:
+   *
+   *   Point        "A stranger could repeat it after hearing it once."
+   *   Explanation  "It answers 'why', and does not say the Point again."
+   *   Evidence     "The judge could write down both the number and who said it."
+   *   Link         "It names the decision, and not only the topic."
+   *
+   * Two things make this worth a field rather than prose in `note`. It is
+   * STUDENT-FACING and self-administered — `note` is an annotation about why
+   * the model works, addressed to whoever is reading the model, and a student
+   * cannot apply it to a sentence they have not written yet. And it is the
+   * source the exit ballot is supposed to be built from: his four ballot rows
+   * ten pages later ARE these four tests, restated. A ballot that invents its
+   * criteria at the end is assessing something nobody was taught, which is
+   * exactly what the `ballot-tests-what-was-taught` gate now refuses.
+   *
+   * Observable, therefore. "Is it clear?" is not a pass condition; "could a
+   * stranger repeat it after hearing it once" is, because two students would
+   * agree on the answer.
+   */
+  passesWhen: z.string().optional().default(""),
 });
 export type ExampleLayer = z.infer<typeof exampleLayerSchema>;
 
@@ -292,8 +354,24 @@ export type Callout = z.infer<typeof calloutSchema>;
 export const microFlowSchema = z.object({
   /** whose speech is being flowed — "your partner's 90-second case" */
   target: z.string().default(""),
-  /** how many arguments must be captured; each is one row of three cells */
-  captures: z.number().int().min(1).max(6).default(3),
+  /**
+   * How many arguments must be captured; each is one row of three cells.
+   *
+   * `.catch()`, not just `.default()`, and the difference is worth a sentence.
+   * A model asked for a page that carries no micro-flow says so by writing
+   * `captures: 0` — which is out of range, and under a bare `.min(1)` threw,
+   * which failed `activitySchema.parse`, which failed the whole rewrite and
+   * discarded a generation the teacher had already waited a minute and paid
+   * for. Over a number that nothing reads: whether a page HAS a micro-flow is
+   * decided by `target` (see hasMechanic in lib/rigor.ts), and the print view
+   * renders the grid only when `target` is non-empty.
+   *
+   * So an out-of-range count falls back to the house default instead of taking
+   * the page down with it. The pedagogical rule is unaffected — it was never
+   * this field's job, and the rigor gate still refuses a page that owes a
+   * micro-flow and has no target.
+   */
+  captures: z.number().int().min(1).max(6).catch(3).default(3),
   /** teacher-facing model of ONE correctly flowed row, for this content */
   exemplar: z
     .object({
@@ -347,8 +425,13 @@ export type BallotLine = z.infer<typeof ballotLineSchema>;
  * room.
  */
 export const microCrossfireSchema = z.object({
-  /** length of the exchange — 30s unless a page has a reason to differ */
-  seconds: z.number().int().min(15).max(120).default(30),
+  /**
+   * Length of the exchange — 30s unless a page has a reason to differ.
+   * `.catch()` for the same reason as microFlow.captures above: a page with no
+   * crossfire is announced as `seconds: 0`, presence is decided by
+   * `questions.length`, and a bad number here must not cost the whole page.
+   */
+  seconds: z.number().int().min(15).max(120).catch(30).default(30),
   /** what the listening partner is doing, in one line */
   listenerRole: z.string().default(""),
   /** ready-made questions, each aimed at a warrant or an evidence limit */
@@ -387,6 +470,166 @@ export const echoCheckSchema = z.object({
 });
 export type EchoCheck = z.infer<typeof echoCheckSchema>;
 
+/**
+ * A FIGURE — the graphics the founder's pack teaches with, as data.
+ *
+ * His sheets are roughly 18% ink; a lot of the rest is diagram. And the
+ * diagrams are not decoration — reading one IS the exercise on his page five,
+ * where students argue the same picture two opposite ways. We had exactly one
+ * data primitive, `callouts`: a big number and a label. You cannot draw "four
+ * of every hundred, rising to twelve" with a big number.
+ *
+ * Four kinds, chosen because each appears in his pack AND generalises past its
+ * topic. The fifth thing he draws — fifteen shaded US states — is deliberately
+ * NOT here: a choropleth of one country is a picture of one dataset, not a
+ * primitive, and a schema field nobody outside that lesson can fill is a field
+ * that gets filled wrongly.
+ *
+ *   unit-chart    N of M as a grid of small boxes, optionally with a SECOND
+ *                 series so a change over time is one picture rather than two.
+ *                 His: 4 of 100 in 2023 → 12 of 100 by 2030.
+ *   process-flow  ordered stages along a line. His: the six technical stages
+ *                 from power generation to servers.
+ *   ratio         two magnitudes and how many of one make the other. His: about
+ *                 five ordinary data centers = one hyperscale one.
+ *   balance       one subject with what it brings on one side and what it costs
+ *                 on the other. His: one new center, three gains, three costs.
+ *
+ * ── THE FIELD THAT MATTERS MOST IS `exact` ─────────────────────────────────
+ * He rounds for the picture and then prints the true number underneath it:
+ * the pictogram says 4 of 100 and 12 of 100, and the line below says "Exact:
+ * 4.4% measured; 11.8% estimated". That is not a caveat, it is the intellectual
+ * honesty of the pack made visible — and it is the habit the lesson is trying
+ * to teach, since a debater who rounds silently is a debater who will be caught
+ * doing it. A figure that simplifies a number and does not print the real one
+ * teaches the opposite lesson, so the checklist requires it.
+ */
+export const figureSchema = z.object({
+  kind: z.enum(["unit-chart", "process-flow", "ratio", "balance"]),
+  /** what the figure is showing, in the student's words — the headline above it */
+  title: z.string().default(""),
+  /** the one line a student should take away, printed under the drawing */
+  caption: z.string().default(""),
+  /** the unrounded truth, wherever the drawing rounds. See the note above. */
+  exact: z.string().default(""),
+  /** attribution — a figure is evidence and carries its source like any card */
+  source: z.string().default(""),
+
+  // ── unit-chart ──
+  /** how many of `total` are filled; the "now" series */
+  filled: z.number().int().min(0).default(0),
+  total: z.number().int().min(1).max(400).default(100),
+  /** optional second series, for a change: the "then" value and what it means */
+  thenFilled: z.number().int().min(0).optional(),
+  nowLabel: z.string().default(""),
+  thenLabel: z.string().default(""),
+
+  // ── process-flow ──
+  /** ordered stages; the renderer numbers them and draws the line */
+  stages: z.array(z.string()).default([]),
+
+  // ── ratio ──
+  /** "about five ordinary centers" = "one hyperscale center" */
+  ratioLeft: z.string().default(""),
+  ratioRight: z.string().default(""),
+  /** how many of the left make one right, drawn as repeated marks */
+  ratioCount: z.number().int().min(1).max(20).optional(),
+
+  // ── balance ──
+  /** the thing being weighed — printed in the middle */
+  subject: z.string().default(""),
+  bringsLabel: z.string().default("What it brings"),
+  costsLabel: z.string().default("What it costs"),
+  brings: z.array(z.object({ head: z.string(), detail: z.string().default("") })).default([]),
+  costs: z.array(z.object({ head: z.string(), detail: z.string().default("") })).default([]),
+});
+export type Figure = z.infer<typeof figureSchema>;
+
+/**
+ * THE EXIT BALLOT — assessment that reaches the student's own page.
+ *
+ * The strongest single idea in the founder's pack, and the one our packs had no
+ * way to express. Ours put the rubric in `teacherGuide.rubric` and the ballot in
+ * a separate material type, so the page a student actually holds at the end of
+ * a lesson asked them to reflect in free text. A novice writing free-text
+ * self-assessment produces "I did okay"; a closed list forces a decision, and
+ * the decision IS the learning.
+ *
+ * Four parts, and each one is load-bearing:
+ *
+ *   rows      what a partner marks. These must be the criteria the pack ALREADY
+ *             TAUGHT — his four ballot rows are the four pass conditions from
+ *             page 3, restated. A ballot that introduces new criteria at the
+ *             end is assessing something nobody was taught.
+ *   errors    a CLOSED list the student marks one of. Closed, because naming
+ *             your own failure from an open field is a skill above this level,
+ *             and because a fixed vocabulary is what lets a coach say "you had
+ *             a number-three again" in week six.
+ *   repairs   the named moves. Every error must have a move that answers it,
+ *             or the student is told what went wrong and left there.
+ *   product   what they physically leave with. His says it outright — "you
+ *             leave with a rewritten sentence, not a score" — which is what
+ *             stops the page becoming a mark out of ten.
+ */
+export const exitBallotSchema = z.object({
+  rows: z
+    .array(
+      z.object({
+        /** the criterion, in the words it was taught in ("Clear side and claim") */
+        criterion: z.string(),
+        /** the observable test a partner applies ("A stranger could repeat it") */
+        test: z.string().default(""),
+      })
+    )
+    .default([]),
+  /** the marks available per row — three bands beat two, because "almost" is where most novices land */
+  scale: z.array(z.string()).default(["Yes", "Almost", "Not yet"]),
+  /** named failures, closed list; the student marks exactly one */
+  errors: z.array(z.string()).default([]),
+  /** named repair moves; between them they must answer every error above */
+  repairs: z.array(z.string()).default([]),
+  /** what the student leaves the room holding */
+  product: z.string().default(""),
+});
+export type ExitBallot = z.infer<typeof exitBallotSchema>;
+
+/**
+ * A CARD WITH A JOB — the founder's evidence pedagogy, which we had no form for.
+ *
+ * His two evidence pages do not print three cards and hope. Each card is handed
+ * ONE named job, in a fixed order, and the job is the exercise:
+ *
+ *   1  THE SPEECH LINE   the sentence you would really say out loud
+ *   2  THE LIMIT         what it does not show, said before the other side says it
+ *   3  THE WEIGH         why this cost should decide the round
+ *
+ * Two things follow from binding a job to a card rather than listing jobs and
+ * listing cards. The student is not asked to do all three on every card, which
+ * is what turns an evidence page into a worksheet nobody finishes — one job per
+ * card, three cards, is the whole page. And the LIMIT stops being a caveat
+ * printed under a number and becomes a thing the student has to write, which is
+ * the difference between knowing a card's scope and being able to say it before
+ * an opponent does.
+ *
+ * Measured cost of not having this: rendering the founder's own PF-08 through
+ * the first JV layout, the three job boxes came out at one ruled line each while
+ * two unrelated boxes on the same sheet got four. Nothing connected a job to the
+ * card it belonged to, so nothing could size them.
+ *
+ * `cardId` points at an `evidenceCards[].id` ("A", "B"). The job lives on the
+ * ACTIVITY, not on the card, because the same card carries different jobs on
+ * different pages — that is the point of reusing a card five times.
+ */
+export const cardJobSchema = z.object({
+  /** which card in the deck this job belongs to — an evidenceCards[].id */
+  cardId: z.string(),
+  /** the job's name, in the words the page uses ("THE LIMIT") */
+  job: z.string(),
+  /** what the student actually writes, one line, student-facing */
+  instruction: z.string().default(""),
+});
+export type CardJob = z.infer<typeof cardJobSchema>;
+
 /** One student-facing page/section of the pack. */
 export const activitySchema = z.object({
   kind: z.enum(ACTIVITY_KINDS),
@@ -414,6 +657,60 @@ export const activitySchema = z.object({
   // deciding when two teams both attempt it. A pack can teach a skill correctly
   // and still leave a student with no idea why one execution wins the ballot.
   hiddenJudgeMove: z.string().optional().default(""),
+  /**
+   * WHY THIS PAGE EXISTS — addressed to the STUDENT, one or two sentences.
+   *
+   * The single cheapest thing in the founder's pack and one of the strongest:
+   * every one of his seventeen sheets carries it, and none of them is generic.
+   * "A judge trusts the debater who can say what the other side gets right."
+   * "A side that only says no gives a judge nothing to vote for." "Debaters
+   * improve one named fix at a time."
+   *
+   * It is NOT `hiddenJudgeMove`, which is the nearest field we had and is the
+   * wrong one twice over: that is teacher-facing, and it is about what wins a
+   * round rather than about why a student is being asked to do this page at
+   * all. Nor is it `instructions`, which says what to do. This says why doing
+   * it is worth the fourteen minutes — the question every fifteen-year-old asks
+   * silently and most worksheets never answer.
+   *
+   * A generic one is worse than none, because it teaches that the answer to
+   * "why am I doing this" is boilerplate. The checklist holds it to being
+   * distinct across the pack for exactly that reason.
+   */
+  whyItMatters: z.string().optional().default(""),
+  /** One named job per evidence card used on this page; see cardJobSchema. */
+  cardJobs: z.array(cardJobSchema).default([]),
+  /** Diagrams the page teaches with; see figureSchema. */
+  figures: z.array(figureSchema).default([]),
+  /**
+   * CAN THIS PAGE BE DROPPED WHEN THE ROOM RUNS BEHIND?
+   *
+   * Every real class runs behind. What happens then is not a planning question,
+   * it is a design one: with no stated cut path the teacher improvises under
+   * time pressure, and the first thing cut is whatever is at the END of the
+   * pack — which is the exit ticket, the one page that must not be cut, because
+   * it is where the student produces the thing the lesson was for.
+   *
+   * Marking the droppable pages inverts that. A coach at minute sixty can skip
+   * the page the author already decided was extension work and still land the
+   * assessment. The founder's own pack separates thirteen core pages from four
+   * supplemental ones for exactly this reason.
+   *
+   * Defaults to false — "you need this" — so every pack written before this
+   * field is unchanged and nothing silently becomes skippable.
+   */
+  optional: z.boolean().optional().default(false),
+  /**
+   * WHICH TOPIC THIS PAGE RUNS ON — see `practiceTopic` on the pack.
+   *
+   * Defaults to "anchor", so every pack written before this field existed is
+   * unchanged: all of its pages run on the resolution, exactly as they did.
+   */
+  runsOn: z.enum(["anchor", "practice"]).optional().default("anchor"),
+  /** The peer ballot + repair grid. Belongs on the exit ticket; see exitBallotSchema. */
+  exitBallot: exitBallotSchema
+    .optional()
+    .default({ rows: [], scale: ["Yes", "Almost", "Not yet"], errors: [], repairs: [], product: "" }),
   /**
    * THE ATTEMPT / CONSOLIDATION PAIR — see `lib/attempt-cycle.ts`.
    *
@@ -552,6 +849,19 @@ export const teacherGuideSchema = z.object({
     .array(z.object({ title: z.string(), script: z.string() }))
     .default([]),
   pitfalls: z.string().optional().default(""), // prep & pitfalls + CFU questions
+  /**
+   * IF THE ROOM IS AHEAD OF THE PLAN — one or two sentences, at the LESSON
+   * level. Distinct from two fields that already cover pacing:
+   * `activity.optional` says what to CUT when the room is behind; a
+   * per-activity `fastFinisher` gives one fast STUDENT something harder while
+   * the rest of the room catches up. Neither answers "the whole class moved
+   * faster than planned — what do I do with the extra ten minutes?", which
+   * is a lesson-level call, not a per-page or per-student one.
+   *
+   * Optional and defaults to "" so every pack written before this field is
+   * unchanged.
+   */
+  ifAheadOfSchedule: z.string().optional().default(""),
   // Per-page coaching for the two adults in the room — see pageCoachingSchema.
   pageCoaching: z.array(pageCoachingSchema).default([]),
   rubric: z.array(rubricBandSchema).default([]),
@@ -571,6 +881,39 @@ export const lessonPackSchema = z.object({
   skillFocus: z.string(), // "PEEL Structure"
   series: z.string(), // "UBI Novice"
   resolution: z.string(), // the season's resolution — must stay consistent
+  /**
+   * THE PRACTICE TOPIC — a low-load subject the new skill is taught on BEFORE
+   * the real anchor has to carry it.
+   *
+   * The strongest structural decision in the founder's pack, and the one this
+   * schema previously made impossible to express. He teaches PEEL on a class
+   * dog and a school phone ban for four pages; only from page five does the
+   * researched resolution (a federal moratorium on hyperscale data centers)
+   * carry any weight, and pages ten and eleven then re-run the same build on
+   * it. The student builds the argument twice — once cheap, once real.
+   *
+   * WHY IT IS WORTH A FIELD. A new skill is a FORM. Teaching a new form on
+   * unfamiliar content loads both at once and the student fails at both. The
+   * fix is to isolate the variable: hold the content trivial while the form is
+   * new, then hold the form fixed while the content gets hard.
+   *
+   * ── THE RULE THIS RELAXES, AND WHY IT IS NOT ACTUALLY RELAXED ────────────
+   * The generation prompt required the whole arc to be "anchored to ONE
+   * resolution", written to stop packs that were a pile of disconnected
+   * worksheets. That rule works, and this does not weaken it — because the
+   * founder's architecture is not two unrelated topics. It is: teach on the
+   * easy one, then TRANSFER to the anchor, and the transfer is the connection.
+   * So the requirement moves from SAMENESS to CONNECTEDNESS, which is strictly
+   * stronger: a practice page now owes a later page that picks the skill back
+   * up on the anchor, and the checklist refuses a pack where that handover
+   * never happens. A practice topic with no transfer IS the disconnected
+   * worksheet the old rule was aimed at, and it is now the thing that fails.
+   *
+   * Empty on most packs. A lesson that introduces no new form does not need
+   * one, and inventing a practice topic for a lesson that is already about its
+   * anchor just costs a page.
+   */
+  practiceTopic: z.string().default(""),
   durationMin: z.number().int().min(0).default(120),
   accentColor: z.string().default("#0f766e"), // per-lesson accent
   emoji: z.string().default("🌏"), // cover icon cluster
@@ -676,7 +1019,39 @@ export function packContentHash(pack: LessonPack): string {
     successCriteria: pack.successCriteria,
     vocabulary: pack.vocabulary,
     evidenceCards: pack.evidenceCards,
-    activities: pack.activities.map((a) => ({ ...a, designHtml: "" })), // design ≠ content
+    /**
+     * Three fields are excluded, and the rule is precise: a field belongs out
+     * of this hash only if the QA reviewer provably cannot observe it.
+     *
+     * `reviewPackContent` builds an explicit projection of each activity —
+     * kind, title, instructions, keyIdea, scene, steps, worked example,
+     * compare, sort items, match pairs, frames, callouts, prompts and
+     * stand-and-deliver. Nothing else reaches the model.
+     *
+     *   designHtml   layout, never content (already excluded)
+     *   badge        a decorative print label above the page title
+     *   durationMin  timing, which the DETERMINISTIC checklist judges — the
+     *                reviewer is never shown a single minute figure
+     *
+     * Why it is worth being exact: invalidating this hash forces a full
+     * whole-pack content review, an Opus call costing roughly 26¢. Retiming a
+     * lesson — one click per page in the editor — therefore used to buy a
+     * re-review by a reviewer that cannot see timings and would return the
+     * same verdict it just gave.
+     *
+     * DELIBERATELY STILL IN: the quiz, word bank, argument chains, hidden
+     * judge move and the four rigor mechanics. The reviewer does not currently
+     * see those either — but they are real teaching content, so a change to
+     * them SHOULD invalidate a quality verdict. That is a gap in what QA
+     * inspects, not a reason to stop tracking them; narrowing the hash to
+     * match a reviewer's blind spots would silently bless edits nobody checked.
+     */
+    activities: pack.activities.map((a) => ({
+      ...a,
+      designHtml: "",
+      badge: "",
+      durationMin: 0,
+    })),
     resolution: pack.resolution,
     skillFocus: pack.skillFocus,
   };

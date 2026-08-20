@@ -1,4 +1,4 @@
-import { type LessonPack, countWords } from "./lesson-pack-schema";
+import { type ActivityKind, type LessonPack, countWords } from "./lesson-pack-schema";
 import { RIGOR_LABELS, missingMechanics, requiredMechanics } from "./rigor";
 import { attemptCycleIssues, attemptPages } from "./attempt-cycle";
 import { findContrastIssues } from "./mono-contrast";
@@ -61,8 +61,16 @@ export function studentReadWords(a: LessonPack["activities"][number]): number {
     a.matchPairs.reduce((n, m) => n + w(m.left) + w(m.right), 0) +
     a.frames.reduce((n, f) => n + w(f.label) + w(f.starter), 0) +
     a.exampleLayers.reduce((n, l) => n + w(l.label) + w(l.text), 0) +
-    a.prompts.reduce((n, p) => n + w(p.label), 0) +
+    // `guide` and `trap` print on the student copy, so they spend the reading
+    // budget like any other line on the page. Counting them is what keeps the
+    // coaching honest: it has to be worth the words it costs.
+    a.prompts.reduce((n, p) => n + w(p.label) + w(p.guide) + w(p.trap), 0) +
+    // Card jobs and pass conditions print on the student copy too.
+    a.cardJobs.reduce((n, j) => n + w(j.job) + w(j.instruction), 0) +
+    a.figures.reduce((n, f) => n + w(f.title) + w(f.caption) + w(f.exact) + f.stages.reduce((m, x) => m + w(x), 0), 0) +
+    a.exampleLayers.reduce((n, l) => n + w(l.passesWhen), 0) +
     w(a.keyIdea) +
+    w(a.whyItMatters) +
     w(a.standAndDeliver)
   );
 }
@@ -80,6 +88,32 @@ const CRITERIA_STOPWORDS = new Set(
 
 const MIN_LIMIT_WORDS = 8;
 const MIN_RUBRIC_BANDS = 3;
+
+/**
+ * Page kinds whose prompts must carry student-facing coaching, and page kinds
+ * that owe two pieces of student work rather than one.
+ *
+ * Exported because `lib/ai.ts` builds the repair instruction from the same two
+ * lists, and a gate that disagrees with its own repair is a build that loops:
+ * the checklist fails a page, the repair fixes a different set of pages, and
+ * the next validate pass fails it again. Same reason `lib/rigor.ts` owns its
+ * mapping for all three consumers instead of restating it in each.
+ */
+export const COACHED_KINDS: ActivityKind[] = [
+  "we-do",
+  "scaffolded-build",
+  "bridge",
+  "independent-build",
+  "exit-ticket",
+];
+
+export const HEAVY_PRODUCTION_KINDS: ActivityKind[] = [
+  "we-do",
+  "drill",
+  "scaffolded-build",
+  "independent-build",
+  "exit-ticket",
+];
 
 /**
  * Run the right checklist for a material's content type. Every type is gated
@@ -509,6 +543,362 @@ export function runChecklist(
                     .join(" + ")}`
               )
               .join("; ")
+      );
+    }
+  }
+
+  // ── The student page carries its own coaching ──
+  // The gap this closes was the largest one measured against the founder's
+  // benchmark: our packs contain MORE instructional intelligence than his and
+  // print less of it, because the model answer, the warning and the coaching
+  // all shared `expectedAnswer` — which is teacher-only. A page then reaches a
+  // student as a label and a blank, and the only way to run the lesson is for
+  // the coach to narrate the key aloud page by page.
+  //
+  // Scoped to the pages where a student PRODUCES something rather than checks
+  // something: on a hook or a vocabulary drill the prompt is a quick recall and
+  // a coaching line would be clutter, but nobody writes a full argument well
+  // from a bare instruction. Same rule of thumb as lib/rigor.ts — require it
+  // where its absence lets a student produce the right-looking artifact without
+  // doing the thinking.
+  {
+    const owed = pack.activities.filter(
+      (a) => COACHED_KINDS.includes(a.kind) && a.prompts.length > 0
+    );
+    const bare = owed.filter((a) => a.prompts.some((p) => !p.guide?.trim()));
+    if (owed.length > 0) {
+      add(
+        "student-coaching",
+        "Production pages tell the student what goes in the box",
+        bare.length === 0,
+        bare.length === 0
+          ? `All ${owed.length} production page(s) carry student-facing guidance`
+          : `${bare
+              .map((a) => a.title || a.kind)
+              .join(", ")} — every prompt on these pages needs a one-line \`guide\` naming the MOVE (not the answer), printed next to the box. The expected answer stays the teacher's key.`
+      );
+    }
+  }
+
+  // ── A figure that rounds must print the number it rounded ──
+  // The founder's habit, and the one worth enforcing above all the others in
+  // his graphics: the pictogram says 4 of 100 and 12 of 100, and the line
+  // underneath says "Exact: 4.4% measured; 11.8% estimated". A pack that
+  // simplifies a number for a picture and never states the real one is teaching
+  // the exact move the lesson exists to stop — quiet rounding is how a debater
+  // gets caught, and a student learns the habit from the page before they learn
+  // it from the rule.
+  //
+  // Only fires where the drawing ACTUALLY rounds. A four-stage process flow
+  // rounds nothing and owes nothing.
+  {
+    const rounds = (f: LessonPack["activities"][number]["figures"][number]) =>
+      f.kind === "unit-chart" || f.kind === "ratio";
+    const owed: string[] = [];
+    for (const a of pack.activities) {
+      for (const f of a.figures) {
+        if (rounds(f) && !f.exact.trim())
+          owed.push(`${a.title || a.kind}: ${f.title || f.kind}`);
+      }
+    }
+    if (pack.activities.some((a) => a.figures.length > 0)) {
+      add(
+        "figures-state-the-exact",
+        "A figure that rounds a number also prints the real one",
+        owed.length === 0,
+        owed.length === 0
+          ? `${pack.activities.reduce((n, a) => n + a.figures.length, 0)} figure(s), each honest about what it rounded`
+          : `${owed.slice(0, 3).join("; ")} — the drawing simplifies a number and nothing says what it really was. Fill \`exact\`.`
+      );
+
+      // A figure is evidence, and evidence carries its source. Same rule the
+      // cards live under; a chart is not exempt because it is a picture.
+      const unsourced = pack.activities.flatMap((a) =>
+        a.figures.filter((f) => !f.source.trim()).map((f) => `${a.title || a.kind}: ${f.title || f.kind}`)
+      );
+      add(
+        "figures-sourced",
+        "Every figure names where its numbers came from",
+        unsourced.length === 0,
+        unsourced.length === 0
+          ? "Figures are attributed"
+          : `${unsourced.slice(0, 3).join("; ")} — a chart with no source is an unattributed claim that happens to be drawn.`
+      );
+    }
+  }
+
+  // ── A long pack states what to drop when the room runs behind ──
+  // Only fires on packs long enough for the problem to be real. Every class
+  // runs behind eventually, and with no cut path the teacher improvises under
+  // time pressure — at which point the thing that gets cut is whatever sits at
+  // the END, which is the exit ticket, the one page the lesson exists to reach.
+  //
+  // The exit ticket may never be the droppable one, for the same reason.
+  {
+    const LONG = 12;
+    if (pack.activities.length >= LONG) {
+      const optional = pack.activities.filter((a) => a.optional);
+      const badly = optional.filter((a) => a.kind === "exit-ticket");
+      const ok = optional.length > 0 && badly.length === 0;
+      add(
+        "cut-path",
+        `A ${LONG}+ page pack says which pages can be dropped`,
+        ok,
+        badly.length > 0
+          ? `${badly.map((a) => a.title || a.kind).join(", ")} is marked droppable — the exit ticket is the page the lesson exists to reach, and it is the one a teacher running late will cut first if you let them.`
+          : optional.length > 0
+            ? `${optional.length} page(s) marked "if time"`
+            : `${pack.activities.length} pages and nothing marked droppable. A coach at minute sixty will cut whatever is last, which is the assessment. Mark the extension pages \`optional\`.`
+      );
+    }
+  }
+
+  // ── The practice topic hands over, or it is a disconnected worksheet ──
+  //
+  // This is the rule that lets a pack teach a new skill on an easy topic first,
+  // and it is deliberately STRICTER than the "one anchor throughout" rule it
+  // replaces rather than looser. The old rule bought coherence by forbidding a
+  // second topic. This buys it by requiring the handover: a practice page owes
+  // a LATER page that picks the same skill back up on the anchor. A practice
+  // topic with no transfer is exactly the disconnected worksheet the original
+  // rule was aimed at — so that is now the case that fails.
+  //
+  // Silent on the packs that need no practice topic, which is most of them: a
+  // lesson introducing no new form should not invent one, and doing so just
+  // costs a page.
+  {
+    const hasTopic = Boolean(pack.practiceTopic?.trim());
+    const practiceIdx = pack.activities
+      .map((a, i) => (a.runsOn === "practice" ? i : -1))
+      .filter((i) => i >= 0);
+    const anchorIdx = pack.activities
+      .map((a, i) => (a.runsOn !== "practice" ? i : -1))
+      .filter((i) => i >= 0);
+
+    // A page claiming a practice topic the pack does not have.
+    if (!hasTopic && practiceIdx.length > 0) {
+      add(
+        "practice-topic-declared",
+        "Pages running on a practice topic have one to run on",
+        false,
+        `${practiceIdx.length} page(s) are marked as running on a practice topic, but the pack's \`practiceTopic\` is empty — so nothing tells the student what they are arguing about.`
+      );
+    }
+
+    if (hasTopic) {
+      const problems: string[] = [];
+      if (practiceIdx.length === 0)
+        problems.push("no page actually runs on it");
+      if (anchorIdx.length === 0)
+        problems.push("no page runs on the real anchor, so the skill is never transferred");
+      // The handover must come AFTER the practice, not before it. A pack that
+      // does the anchor work first and the easy topic afterwards has the
+      // sequence backwards: the point is to hold content trivial while the form
+      // is new, then hold the form fixed while the content gets hard.
+      if (practiceIdx.length > 0 && anchorIdx.length > 0) {
+        const lastPractice = Math.max(...practiceIdx);
+        const anchorAfter = anchorIdx.filter((i) => i > lastPractice);
+        if (anchorAfter.length === 0)
+          problems.push(
+            "every anchor page comes before the practice pages — the transfer runs backwards"
+          );
+      }
+      add(
+        "practice-transfers",
+        "The practice topic hands the skill over to the anchor",
+        problems.length === 0,
+        problems.length === 0
+          ? `Skill taught on "${pack.practiceTopic.trim().slice(0, 40)}" across ${practiceIdx.length} page(s), then transferred to the anchor`
+          : `${problems.join("; ")}. A practice topic that never hands over is the disconnected worksheet the one-anchor rule exists to prevent.`
+      );
+    }
+  }
+
+  // ── Cards carry named jobs, and the jobs point at real cards ──
+  // The founder's evidence pages hand each card ONE job — speech line, limit,
+  // weigh — rather than printing three cards and hoping. Two things can go
+  // wrong and both are silent: a job can name a card that is not in the deck
+  // (a dangling reference nobody notices until a student looks for card D and
+  // there are three cards), and an evidence-study page can carry no jobs at
+  // all, which is the "printed and hoped" failure this whole block exists to
+  // stop.
+  {
+    const ids = new Set(pack.evidenceCards.map((c) => c.id.trim().toUpperCase()));
+    const dangling: string[] = [];
+    for (const a of pack.activities) {
+      for (const j of a.cardJobs) {
+        const id = j.cardId.trim().toUpperCase();
+        if (!id || !ids.has(id)) dangling.push(`${a.title || a.kind} → "${j.cardId || "(blank)"}"`);
+      }
+    }
+    if (pack.activities.some((a) => a.cardJobs.length > 0)) {
+      add(
+        "card-jobs-resolve",
+        "Every card job points at a card that exists in the deck",
+        dangling.length === 0,
+        dangling.length === 0
+          ? `${pack.activities.reduce((n, a) => n + a.cardJobs.length, 0)} job(s), all resolving`
+          : `${dangling.slice(0, 4).join("; ")} — a job naming a card that is not in the deck sends a student looking for evidence that was never printed.`
+      );
+    }
+
+    const studies = pack.activities.filter((a) => a.kind === "evidence-study");
+    if (studies.length > 0 && pack.evidenceCards.length > 0) {
+      const jobless = studies.filter((a) => a.cardJobs.length === 0);
+      add(
+        "cards-have-jobs",
+        "Evidence pages give each card a job, not just a paraphrase to read",
+        jobless.length === 0,
+        jobless.length === 0
+          ? `All ${studies.length} evidence page(s) assign work per card`
+          : `${jobless.map((a) => a.title || a.kind).join(", ")} — cards printed with nothing to do with them are a reference deck, not an activity. Assign one job per card (a speech line, the scope limit, or why it should decide the round).`
+      );
+    }
+  }
+
+  // ── The exit ticket carries an instrument the student can actually use ──
+  // Not a rubric in the teacher guide and not a free-text reflection. The three
+  // sub-checks are the three ways this block goes soft:
+  //   no rows      → nothing is being judged
+  //   no errors    → the student is asked to diagnose from an open field, which
+  //                  at this level produces "I did okay"
+  //   no repairs   → they are told what went wrong and left there, which is the
+  //                  difference between an assessment and a diagnosis
+  {
+    const exits = pack.activities.filter((a) => a.kind === "exit-ticket");
+    if (exits.length > 0) {
+      const bad = exits
+        .map((a) => {
+          const b = a.exitBallot;
+          const miss: string[] = [];
+          if ((b?.rows?.length ?? 0) < 3) miss.push("3+ ballot rows");
+          if ((b?.errors?.length ?? 0) < 3) miss.push("3+ named errors");
+          if ((b?.repairs?.length ?? 0) < 2) miss.push("2+ repair moves");
+          if (!b?.product?.trim()) miss.push("what the student leaves with");
+          return miss.length ? `${a.title || a.kind} needs ${miss.join(", ")}` : "";
+        })
+        .filter(Boolean);
+      add(
+        "exit-ballot",
+        "The exit ticket carries a ballot, a named error list and a repair move",
+        bad.length === 0,
+        bad.length === 0
+          ? "Students leave with a diagnosis and a rewrite, not a score"
+          : `${bad.join("; ")} — a rubric in the teacher guide is not an instrument the student can use.`
+      );
+
+      // And the rows must be criteria the pack actually taught. A ballot that
+      // introduces new standards at the end is assessing something nobody was
+      // shown — the exact "assessed but not taught" failure the rubric already
+      // warns about, arriving through a different door.
+      const taught = [
+        ...pack.successCriteria,
+        ...pack.activities.flatMap((a) => [
+          a.instructions,
+          a.keyIdea,
+          ...a.prompts.map((p) => p.label),
+          ...a.exampleLayers.map((l) => `${l.label} ${l.note}`),
+          ...a.steps.map((s) => `${s.text} ${s.detail}`),
+        ]),
+      ]
+        .join(" ")
+        .toLowerCase();
+      const orphan = exits.flatMap((a) =>
+        (a.exitBallot?.rows ?? [])
+          .filter((r) => {
+            const words = r.criterion
+              .toLowerCase()
+              .split(/[^a-z]+/)
+              .filter((w) => w.length > 3 && !CRITERIA_STOPWORDS.has(w));
+            // One substantive word in common is a low bar deliberately: the
+            // rule is meant to catch a ballot written from scratch, not to
+            // police paraphrase.
+            return words.length > 0 && !words.some((w) => taught.includes(w));
+          })
+          .map((r) => r.criterion)
+      );
+      add(
+        "ballot-tests-what-was-taught",
+        "Every ballot row judges something the pack taught",
+        orphan.length === 0,
+        orphan.length === 0
+          ? "Ballot criteria trace back to the lesson"
+          : `${orphan.slice(0, 3).join("; ")} — nothing earlier in the pack teaches this, so the exit ticket is judging a standard the student never saw.`
+      );
+    }
+  }
+
+  // ── Every page tells the student why it exists ──
+  // One or two sentences, and the duplicate check is the point of the rule
+  // rather than a nicety. Asked for a reason to care on fourteen pages, the
+  // cheapest thing to write is the same reason fourteen times — and a generic
+  // one actively teaches that "why am I doing this" has a boilerplate answer.
+  // The founder's pack carries one on every sheet and no two are alike.
+  if (pack.activities.length > 0) {
+    const missing = pack.activities.filter((a) => !a.whyItMatters?.trim());
+    const norm = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9 ]/g, "");
+    const seen = new Map<string, string>();
+    const dupes: string[] = [];
+    for (const a of pack.activities) {
+      const w = a.whyItMatters?.trim();
+      if (!w) continue;
+      const k = norm(w);
+      if (seen.has(k)) dupes.push(`${a.title || a.kind} repeats ${seen.get(k)}`);
+      else seen.set(k, a.title || a.kind);
+    }
+    add(
+      "why-this-page",
+      "Every page says why it exists, in the student's own terms",
+      missing.length === 0 && dupes.length === 0,
+      missing.length === 0 && dupes.length === 0
+        ? `All ${pack.activities.length} pages carry a distinct reason to care`
+        : [
+            missing.length
+              ? `${missing.length} page(s) give no reason: ${missing.slice(0, 3).map((a) => a.title || a.kind).join(", ")}${missing.length > 3 ? "…" : ""}`
+              : "",
+            dupes.length ? `Repeated: ${dupes.slice(0, 2).join("; ")}` : "",
+          ]
+            .filter(Boolean)
+            .join(" · ")
+    );
+  }
+
+  // ── Coaching that is really a second answer key ──
+  // The failure mode of the rule above, and the reason it is worth its own
+  // check: asked for student guidance next to a box that already has an
+  // expected answer, the cheapest thing to write is a shortened copy of that
+  // answer. That hands the student the result and teaches nothing, and it is
+  // invisible in review because the page LOOKS well scaffolded.
+  //
+  // Length is the detectable proxy. A `guide` naming a move is short; one that
+  // has started reciting the answer runs long, and a `trap` generic enough to
+  // fit any page ("be specific", "do not be vague") teaches nothing either.
+  {
+    const GUIDE_MAX = 22;
+    const GENERIC = /^(be |do not be |don'?t be |avoid being )?(too )?(specific|vague|general|clear|detailed|brief|thorough|careful)\b/i;
+    const bloated: string[] = [];
+    for (const a of pack.activities) {
+      for (const p of a.prompts) {
+        const g = p.guide?.trim() ?? "";
+        const t = p.trap?.trim() ?? "";
+        const gWords = g ? g.split(/\s+/).length : 0;
+        const tWords = t ? t.split(/\s+/).length : 0;
+        if (gWords > GUIDE_MAX)
+          bloated.push(`${a.title || a.kind}: guide runs ${gWords} words`);
+        else if (tWords > GUIDE_MAX)
+          bloated.push(`${a.title || a.kind}: trap runs ${tWords} words`);
+        else if (t && GENERIC.test(t))
+          bloated.push(`${a.title || a.kind}: trap is generic ("${t.slice(0, 40)}")`);
+      }
+    }
+    if (pack.activities.some((a) => a.prompts.some((p) => p.guide?.trim() || p.trap?.trim()))) {
+      add(
+        "coaching-is-not-the-key",
+        `Student coaching stays a one-line move, not a copy of the answer`,
+        bloated.length === 0,
+        bloated.length === 0
+          ? "Guidance lines are short and specific to their page"
+          : `${bloated.slice(0, 4).join("; ")}${bloated.length > 4 ? `, +${bloated.length - 4} more` : ""} — keep each under ${GUIDE_MAX} words and name the move, not the answer. A trap that would fit any page should be deleted.`
       );
     }
   }
@@ -1034,13 +1424,27 @@ export function runChecklist(
   }
 
   // ── Reading load ──
-  // A page is a page: novices get a hard ceiling so it can't become a wall of
-  // text, and the ceiling is generous enough that a rich page still passes.
+  // A page is a page: novices get a ceiling so it can't become a wall of text,
+  // and the ceiling is generous enough that a rich page still passes.
+  //
+  // RECALIBRATED against the founder's own classroom pack, which averages ~358
+  // words of student reading per sheet and peaks above 500 — measured the same
+  // way this function measures, since `studentReadWords` counts labels, steps,
+  // compare rows, frames and prompt labels rather than prose alone. The old
+  // 200/300 pair put the ceiling BELOW the benchmark's average, so ten of his
+  // thirteen core pages would have failed here and the repair loop would have
+  // been told to cut them. A gate that would reject the reference material is
+  // measuring the wrong thing.
+  //
+  // The numbers below are still well under his peak: the aim is to stop a wall
+  // of prose, not to cap a page that is dense in short labelled cells. They
+  // also have to absorb the per-prompt coaching lines, which now print on the
+  // student copy and are counted above.
   if (pack.activities.length > 0) {
     const young =
       /\b(4|5|6|7|8)\b/.test(pack.gradeBand || "") &&
       !/\b(9|10|11|12)\b/.test(pack.gradeBand || "");
-    const CEILING = young ? 200 : 300;
+    const CEILING = young ? 240 : 380;
     const heavy = pack.activities
       .map((a) => ({ a, n: studentReadWords(a) }))
       .filter((x) => x.n > CEILING);
@@ -1051,6 +1455,54 @@ export function runChecklist(
       heavy.length === 0
         ? "Every page is within the reading budget"
         : `${heavy.map((x) => `${x.a.title || x.a.kind} (${x.n} words)`).join(", ")} — split the page or cut copy; ${young ? "novices stop reading" : "this is a worksheet, not an essay"}.`
+    );
+  }
+
+  // ── The other half of the reading budget: a page a student does nothing on ──
+  // The ceiling above was gated and the floor was only ever requested in the
+  // prompt, and the drift that produced is measurable: the most advanced pack
+  // in the library is also its thinnest. `gradeBandGuidance` tells the model
+  // that for older readers "the danger is a page that is too THIN" — but no
+  // check ever disagreed with a thin page, and a prompt rule with no gate
+  // behind it is the kind this codebase has learned stops being true.
+  //
+  // Word count is the wrong floor: a build page is legitimately short on words
+  // and long on boxes. What actually makes a page worth its sheet is how many
+  // times the student has to DECIDE or PRODUCE something on it — so that is
+  // what gets counted.
+  if (pack.activities.length > 0) {
+    const surfaces = (a: LessonPack["activities"][number]) =>
+      a.prompts.length +
+      a.sortItems.length +
+      a.matchPairs.length +
+      a.frames.length +
+      (a.quiz?.length ?? 0) +
+      (a.microFlow?.target?.trim() ? 1 : 0) +
+      (a.ballotLine?.line?.trim() ? 1 : 0) +
+      (a.microCrossfire?.questions?.length ?? 0) +
+      (a.echoCheck?.tests?.length ?? 0) +
+      (a.standAndDeliver?.trim() ? 1 : 0);
+    // Two on pages whose whole purpose is production; one everywhere else,
+    // including the i-do — a modelled page a student only watches is the exact
+    // failure the content QA has already flagged in this library ("100% passive
+    // with zero prompts"), and one 30-second check fixes it without turning the
+    // model into a worksheet.
+    const thin = pack.activities
+      .map((a) => ({
+        a,
+        n: surfaces(a),
+        need: HEAVY_PRODUCTION_KINDS.includes(a.kind) ? 2 : 1,
+      }))
+      .filter((x) => x.n < x.need);
+    add(
+      "page-does-something",
+      "Every page asks the student to produce or decide something",
+      thin.length === 0,
+      thin.length === 0
+        ? `All ${pack.activities.length} pages put the student to work`
+        : `${thin
+            .map((x) => `${x.a.title || x.a.kind} (${x.n} task${x.n === 1 ? "" : "s"}, needs ${x.need})`)
+            .join(", ")} — a page a student reads without writing, sorting, choosing or saying anything is a handout, not an activity.`
     );
   }
 

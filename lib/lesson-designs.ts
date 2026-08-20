@@ -142,6 +142,73 @@ export const LESSON_DESIGNS: LessonDesign[] = [
       "--pk-label": "11px",
     },
   },
+  {
+    /* ── THE JV REGISTER (Junior Varsity — competing, not yet varsity). ──
+       Reverse-engineered from the founder's Public Forum Lesson 1 and then
+       stress-tested against its own pages at true print geometry. The audit
+       that produced it is worth reading before changing anything here, because
+       three of these decisions were made by breaking the first version.
+
+       THE ONE RULE: colour is reserved for argument structure. A JV page has
+       five coloured things on it and all five are layers of an argument —
+       no accent bars, no tinted callouts, no coloured badges. That is why the
+       tokens below set every bar, badge and rule in INK rather than in
+       `--kit-accent`, which is the opposite of what the other two registers do.
+       The consequence is that colour means one thing, so it can be learned
+       once; and there is almost nothing left for the contrast pass to repair.
+
+       WHY IT IS A THIRD REGISTER AND NOT A CLEAN STUDIO VARIANT: it disagrees
+       with both existing registers about where colour is allowed, which is the
+       same kind of disagreement (about ink) that already keeps novice and elite
+       mutually exclusive. The measured JV-specific parts are the elastic
+       writing surface and the sizing of it; the rest is shared craft that
+       should migrate outward to the other two over time.
+
+       Type is measured from the source pack, not chosen: his body runs
+       8.3–9.4pt with 88.9% of all text under 10pt and a floor at 6.6pt. The px
+       values below land in that band at print scale. */
+    id: "jv-circuit",
+    label: "JV Circuit",
+    emoji: "◆",
+    blurb:
+      "Junior varsity — ink on paper, colour reserved for argument layers, elastic writing areas",
+    cover: "elite",
+    vars: {
+      "--pk-display": "var(--font-oswald)",
+      "--pk-mono": "var(--font-space-mono)",
+      "--pk-hand": "var(--font-lexend)",
+      "--pk-frame": "1px solid #d9dbd6",
+      "--pk-paper": "#fcfcfa",
+      "--pk-ink": "#14171a",
+      "--pk-page-bg": "none",
+      "--pk-page-size": "auto",
+      "--pk-box-border": "1px solid #d9dbd6",
+      "--pk-box-shadow": "none",
+      "--pk-box-radius": "3px",
+      /* Bars and badges are INK, not accent — see the rule above. The pack's
+         accent survives only as the page code and the produce-this marker,
+         which is what `--pk-spot` is for. */
+      "--pk-bar-bg": "#14171a",
+      "--pk-bar-fg": "#fcfcfa",
+      "--pk-badge-bg": "transparent",
+      "--pk-badge-fg": "#5a6169",
+      "--pk-badge-border": "1px solid #d9dbd6",
+      "--pk-badge-radius": "2px",
+      "--pk-headrule": "1.5px solid #14171a",
+      "--pk-head-fg": "#14171a",
+      "--pk-head-font": "var(--pk-display)",
+      "--pk-rule": "#d9dbd6",
+      "--pk-spot": "var(--pk-lesson-accent, #8a2b1f)",
+      "--pk-text": "12px",
+      "--pk-lead": "12.5px",
+      "--pk-title": "23px",
+      "--pk-gap": "13px",
+      "--pk-pad": "12px",
+      /* 8.7px ≈ 6.5pt at print scale — the audit found the first version's
+         labels at 5.6pt, below the source pack's own 6.6pt floor. */
+      "--pk-label": "10px",
+    },
+  },
 ];
 
 const BY_ID = new Map(LESSON_DESIGNS.map((d) => [d.id, d]));
@@ -169,6 +236,16 @@ export function usesNoviceHouse(designId: string | undefined | null): boolean {
  */
 export function usesEliteHouse(designId: string | undefined | null): boolean {
   return designId === "clean-studio";
+}
+
+/**
+ * Which designs carry the JV overlay. Mutually exclusive with the other two for
+ * the same reason they are mutually exclusive with each other — all three
+ * disagree about ink, and a page carrying two overlays takes whichever loaded
+ * last, which is a coin toss rather than a design.
+ */
+export function usesJvHouse(designId: string | undefined | null): boolean {
+  return designId === "jv-circuit";
 }
 
 /**

@@ -100,7 +100,7 @@ export default function JudgeForm({
   const ss = elapsed % 60;
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
+    <div className="mx-auto max-w-3xl">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h1 className="font-display text-3xl text-fg1">Judging · {label}</h1>

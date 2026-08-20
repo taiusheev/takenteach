@@ -17,7 +17,14 @@ import {
 import { type Subject, subjectDef } from "./subjects";
 import { RIGOR_CONTRACT, RIGOR_LABELS, missingMechanics } from "./rigor";
 import { ATTEMPT_CYCLE_CONTRACT } from "./attempt-cycle";
-import { MODELS, policyFor, runsPolish, type AiTask } from "./model-policy";
+import {
+  MODELS,
+  maxOutputFor,
+  policyFor,
+  promptVersion,
+  runsPolish,
+  type AiTask,
+} from "./model-policy";
 import { activeCoalescer } from "./batch-queue";
 import {
   gradeBandGuidance,
@@ -38,6 +45,8 @@ import {
   studentReadWords,
   cardDeployment,
   misplacedOralPages,
+  COACHED_KINDS,
+  HEAVY_PRODUCTION_KINDS,
 } from "./checklist";
 import { type StyleKitConfig, DEFAULT_KIT_CONFIG } from "./style-kit";
 import {
@@ -46,10 +55,15 @@ import {
   ensureDistinctAccent,
   unitArcDigest,
 } from "./unit-plan";
-import { batchActivities, provisionalTimingPlan } from "./activity-batches";
+import {
+  batchActivities,
+  provisionalTimingPlan,
+  reflowTimingPlan,
+} from "./activity-batches";
 import { qaRepairPass, type QaSummary } from "./qa-repair";
-import { recordUsage } from "./usage-meter";
+import { BudgetExceededError, recordUsage } from "./usage-meter";
 import { contentOnly } from "./exemplar";
+import { captureQaScope } from "./qa-scope";
 
 export type { QaSummary };
 
@@ -123,10 +137,21 @@ function aiStream(
   const batch = activeCoalescer();
   if (batch) {
     const handle = batch.enqueue(request as unknown as Record<string, unknown>);
+    const started = Date.now();
     return {
       finalMessage: async () => {
         const message = await handle.finalMessage();
-        recordUsage(message.usage);
+        /* `batched: true` halves the price, which is the entire reason the
+           overnight queue exists — metering it at the live rate would hide the
+           saving it was built to produce. */
+        recordUsage(message.usage, {
+          task,
+          model,
+          effort,
+          ms: Date.now() - started,
+          promptVersion: promptVersion(task),
+          batched: true,
+        });
         return message;
       },
     };
@@ -153,14 +178,25 @@ function aiStream(
     );
   }
 
+  const started = Date.now();
   const stream = client().beta.messages.stream(request);
   // Meter every call from the one place they all pass through. Wrapping the
   // instance's finalMessage keeps this out of all ten call sites — they already
   // await it, and a caller that never does made no measurable request anyway.
+  //
+  // The metadata travels from HERE because this is the only place that knows
+  // all of it: the API response carries token counts and nothing about which of
+  // the product's fourteen jobs asked for them, or what it was priced at.
   const settle = stream.finalMessage.bind(stream);
   stream.finalMessage = async () => {
     const message = await settle();
-    recordUsage(message.usage);
+    recordUsage(message.usage, {
+      task,
+      model,
+      effort,
+      ms: Date.now() - started,
+      promptVersion: promptVersion(task),
+    });
     return message;
   };
   return stream;
@@ -193,8 +229,28 @@ const planSchema = z.object({
   formatReason: z.string(),
   /** the competitive format the squad debates, or "" when the request gives no signal */
   debateFormat: z.string(),
+  /**
+   * SHARP, SPECIFIC QUESTIONS FOR THE TEACHER — never generic ones.
+   *
+   * The one-line idea gets a lesson built; it rarely says what the class
+   * actually struggles with, which is the input that most changes what gets
+   * written (scaffolding, the exit ticket, the drills). Rather than silently
+   * guess, the planner asks — but only for what it genuinely doesn't know:
+   * see the KNOWN-ALREADY rule in the prompt. 0–3 items; empty when the idea
+   * plus what's already known covers it. Answered by typing into the
+   * existing prior-knowledge/misconceptions/constraints fields, not a new
+   * chat turn.
+   */
+  clarifyingQuestions: z.array(z.string()).max(3).default([]),
 });
 export type LessonPlan = z.infer<typeof planSchema>;
+
+/** What the teacher has already told us, so the planner doesn't ask again. */
+export interface KnownContext {
+  priorKnowledge?: string;
+  misconceptions?: string;
+  constraints?: string;
+}
 
 const designSystemSchema = z.object({
   note: z.string(), // one line describing the art direction
@@ -372,7 +428,7 @@ A pack designed with a single accent may look tasteful in isolation and is WRONG
 
 Beyond that code, the palette is yours: pick the exact hues, the paper, the ink and the temperature to fit your concept. Muted ink-and-parchment, cold institutional, high-contrast newsprint — all fine, provided Pro, Con, teacher and highlight remain four things a reader can tell apart instantly.
 
-YOU ARE REPLACING A DESIGN THAT ALREADY WORKS. Every pack ships on the Ascent house standard — the academy's own printed lesson design, measured off their files: 25px page titles on 13px body, a masthead band about 58px tall under a gold underrule, hairline cards on a coloured left rail, semantic Pro/Con/teacher colour, a numbered pill in the footer, nothing overflowing and almost nothing for the contrast pass to rescue. Your stylesheet is measured against those same numbers after it renders, and **if it comes out worse than the house standard it is discarded and the pack keeps the house design**. So the bar is not "is this striking" — it is "is this better than what it replaces, on paper, for a coach and a twelve-year-old".
+YOU ARE REPLACING A DESIGN THAT ALREADY WORKS. Every pack ships on the house standard — the school's own printed lesson design, measured off their files: 25px page titles on 13px body, a masthead band about 58px tall under a gold underrule, hairline cards on a coloured left rail, semantic Pro/Con/teacher colour, a numbered pill in the footer, nothing overflowing and almost nothing for the contrast pass to rescue. Your stylesheet is measured against those same numbers after it renders, and **if it comes out worse than the house standard it is discarded and the pack keeps the house design**. So the bar is not "is this striking" — it is "is this better than what it replaces, on paper, for a coach and a twelve-year-old".
 
 THE HOUSE DEVICES — measured from the academy's own two design systems (the elite War Powers pack and the federal PF textbook). These are not style preferences; each one does a job on paper, and a pack without them is not in the house:
 
@@ -810,7 +866,15 @@ OVERALL — grade A–D, readyForReview (true only if there are no suspect/unsup
  * complete, editable lesson setup. This is the "fewer keys" core: the author
  * says what they want, the model proposes everything else, and they tweak.
  */
-export async function planLesson(idea: string): Promise<LessonPlan> {
+export async function planLesson(
+  idea: string,
+  known: KnownContext = {}
+): Promise<LessonPlan> {
+  const knownLines = [
+    known.priorKnowledge?.trim() && `Already known: ${known.priorKnowledge.trim()}`,
+    known.misconceptions?.trim() && `Already flagged as a misconception to target: ${known.misconceptions.trim()}`,
+    known.constraints?.trim() && `Already stated as a classroom constraint: ${known.constraints.trim()}`,
+  ].filter(Boolean);
   const stream = aiStream("plan", {
     max_tokens: 4000,
     thinking: { type: "adaptive" },
@@ -818,7 +882,7 @@ export async function planLesson(idea: string): Promise<LessonPlan> {
     system: [
       {
         type: "text",
-        text: `You set up lessons for TakenTeach (Debate, Critical Thinking, Academic Writing; middle-school English learners). Given a teacher's one-line idea, propose a complete, sensible setup they can tweak.
+        text: `You set up lessons for a school teaching Debate, Critical Thinking and Academic Writing to middle-school English learners. Given a teacher's one-line idea, propose a complete, sensible setup they can tweak.
 
 Rules:
 - subject: pick the track the idea best fits.
@@ -832,10 +896,16 @@ Rules:
 - rigorLevel: foundational (first exposure), standard (grade-level novice), advanced (ready to stretch), or elite (a competitive squad who already own the fundamentals — pick this only when the request signals varsity/competitive/elite).
 - format: choose the lesson format id that best teaches this skill from: skill-drill, case-study, debate-lab (debate only), workshop (writing/CT), seminar, investigation (CT/debate), tournament, clinic — or "auto" if genuinely unsure.
 - formatReason: one short sentence on why that format fits.
-- debateFormat: the COMPETITIVE format the squad debates, if the request signals one — public-forum, lincoln-douglas, policy, british-parliamentary, wsdc, asian-parliamentary. Read the signals: "PF"/"crossfire"/"final focus" → public-forum; "LD"/"value criterion" → lincoln-douglas; "BP"/"extension"/"whip" → british-parliamentary; "Worlds"/"WSDC" → wsdc; "Asians"/"AP" → asian-parliamentary; "CX"/"plan"/"counterplan" → policy. Use "" when nothing in the request points to a format — do NOT guess.`,
+- debateFormat: the COMPETITIVE format the squad debates, if the request signals one — public-forum, lincoln-douglas, policy, british-parliamentary, wsdc, asian-parliamentary. Read the signals: "PF"/"crossfire"/"final focus" → public-forum; "LD"/"value criterion" → lincoln-douglas; "BP"/"extension"/"whip" → british-parliamentary; "Worlds"/"WSDC" → wsdc; "Asians"/"AP" → asian-parliamentary; "CX"/"plan"/"counterplan" → policy. Use "" when nothing in the request points to a format — do NOT guess.
+- clarifyingQuestions: 0–3 questions ONLY about what would genuinely change what gets built — the students' actual sticking point, a real constraint, what they already tried. NEVER ask about anything this schema already lets you infer (grade band, duration, format) and NEVER ask a generic question a teacher has heard before ("what's your learning objective?"). A good one names a real possibility: "Is it the analysis they're missing, or do they freeze up presenting it live?" KNOWN-ALREADY RULE: if the idea or the "Already known/flagged/stated" lines below already answer something, do not ask about it — asking a question the teacher already answered is worse than not asking. When the idea is already specific and detailed, return an empty array; a forced question is worse than none.`,
       },
     ],
-    messages: [{ role: "user", content: `Teacher's idea: ${idea.trim()}` }],
+    messages: [
+      {
+        role: "user",
+        content: [`Teacher's idea: ${idea.trim()}`, ...knownLines].join("\n"),
+      },
+    ],
   });
   const message = await stream.finalMessage();
   if (message.stop_reason === "refusal") {
@@ -888,7 +958,7 @@ export async function planUnit(
     system: [
       {
         type: "text",
-        text: `You are the head of curriculum at TakenTeach (Debate, Critical Thinking, Academic Writing; middle-school English learners). A teacher gives you a class idea; you return a complete ${count}-lesson unit plan they can teach as a real course. Each lesson will later be expanded into a full ~20-page pack, so plan the SEQUENCE well — that is your whole job here.
+        text: `You are the head of curriculum at a school teaching Debate, Critical Thinking and Academic Writing to middle-school English learners. A teacher gives you a class idea; you return a complete ${count}-lesson unit plan they can teach as a real course. Each lesson will later be expanded into a full ~20-page pack, so plan the SEQUENCE well — that is your whole job here.
 
 WHAT MAKES A UNIT (not just ${count} lessons):
 - ONE anchor for the whole unit (a single debate Resolution / Critical-Thinking Central Question / Writing Focus), stated once and reused verbatim in every lesson. Make it genuinely arguable/answerable and specific.
@@ -969,7 +1039,7 @@ export async function suggestSources(input: {
     system: [
       {
         type: "text",
-        text: `You are a debate/curriculum researcher for TakenTeach. Given a lesson's ${def.anchorLabel.toLowerCase()} and skill, propose 5–6 STRONG candidate sources a teacher could build evidence cards from — a research head-start, not finished cards.
+        text: `You are a debate/curriculum researcher for a school. Given a lesson's ${def.anchorLabel.toLowerCase()} and skill, propose 5–6 STRONG candidate sources a teacher could build evidence cards from — a research head-start, not finished cards.
 
 ABSOLUTE RULE: only real, well-known institutions and publications (World Bank, IMF, OECD, UN agencies, major universities, established research institutes, reputable news orgs). If unsure a specific report exists, name the institution and a broad real publication of theirs rather than inventing a precise title. These are LEADS THE TEACHER WILL VERIFY.
 
@@ -1059,12 +1129,60 @@ const foundationSchema = z.object({
  * that already passed. This asks for just the missing strings, for every faulted
  * page at once, and merges them in.
  */
+/**
+ * THE CHEAP RUNG, WIDENED — and the measurement that forced it.
+ *
+ * This carried two fields. Eleven gates were then added around it, every one
+ * routed to the page-rewrite loop, and the loop is capped at MAX_PAGE_REPAIRS.
+ * Measured over the real library that produced a worse failure than a cost one:
+ *
+ *   16.6 faults per pack · cap of 8 · 8.6 faults LEFT UNREPAIRED every pass
+ *
+ * A pack could no longer clear its own checklist. The gates were individually
+ * right and collectively unsatisfiable, because the repair budget had not grown
+ * with them — the same trap this codebase already documents ("the checklist
+ * grew gates faster than the repair pass grew branches"), arriving through the
+ * cap instead of through a missing branch.
+ *
+ * Every field below is a SHORT STRING or a boolean — a reason to care, the two
+ * coaching lines beside a box, whether a page is droppable, what a figure
+ * rounded. None of them needs a page rewritten to produce it, and rewriting a
+ * page to add one costs ~2000 output tokens to write about thirty.
+ *
+ * What is deliberately NOT here: the exit ballot and "this page has no work on
+ * it". Those need real new content, and a fill call that invented them would be
+ * writing the lesson through a keyhole.
+ */
 const fieldFillSchema = z.object({
   fills: z.array(
     z.object({
       page: z.number().int(),
       fastFinisher: z.string().default(""),
       hiddenJudgeMove: z.string().default(""),
+      /** one or two sentences telling the STUDENT why this page is worth their time */
+      whyItMatters: z.string().default(""),
+      /** true only where the page is genuinely extension work */
+      optional: z.boolean().optional(),
+      /** the two student-facing coaching lines, per prompt index on this page */
+      coaching: z
+        .array(
+          z.object({
+            prompt: z.number().int(),
+            guide: z.string().default(""),
+            trap: z.string().default(""),
+          })
+        )
+        .default([]),
+      /** the honesty lines under a drawing, per figure index on this page */
+      figures: z
+        .array(
+          z.object({
+            figure: z.number().int(),
+            exact: z.string().default(""),
+            source: z.string().default(""),
+          })
+        )
+        .default([]),
     })
   ),
 });
@@ -1246,6 +1364,7 @@ const teacherGuideGenSchema = z.object({
   ),
   launchScripts: z.array(z.object({ title: z.string(), script: z.string() })),
   pitfalls: z.string(),
+  ifAheadOfSchedule: z.string(),
   rubric: z.array(z.object({ score: z.string(), descriptor: z.string() })),
   // Per-page coaching for the two adults in the room — see the prompt contract.
   pageCoaching: z.array(
@@ -1321,6 +1440,8 @@ interface LevelHints {
   misconceptions?: string;
   /** room / materials / tech / grouping reality — keeps activities runnable */
   constraints?: string;
+  /** this teacher's own recent packs leaned on the same activity shapes — see lib/analytics.ts */
+  recentActivity?: string;
 }
 
 /**
@@ -1357,7 +1478,7 @@ function systemBlocks(
   const blocks: Anthropic.TextBlockParam[] = [
     {
       type: "text",
-      text: `You are the lead lesson-pack author for TakenTeach — a master teacher and instructional designer building materials for Debate, Critical Thinking, and Academic Writing. Your lessons are the reason the academy has a reputation; a coach should be able to teach a genuinely excellent class straight from your pack with zero prep.
+      text: `You are the lead lesson-pack author for this school — a master teacher and instructional designer building materials for Debate, Critical Thinking, and Academic Writing. Your lessons are the reason the school has a reputation; a coach should be able to teach a genuinely excellent class straight from your pack with zero prep.
 
 You write complete, classroom-ready lesson packs: ~20 printed A4 pages (15+ student pages, 5 teacher pages). Packs are dense, playful, and intellectually serious — a strong, consistent theming world (specified in the assignment brief below), timed activities, cold-call debriefs, and constant oral participation.
 
@@ -1366,7 +1487,11 @@ ICONS AND EMOJI ARE ALLOWED — use them where they help a twelve-year-old find 
 WHAT "HIGH LEVEL" MEANS — every pack must meet these standards:
 ${rubricForPrompt()}
 
-The single most common failure is a pack that is a pile of disconnected worksheets. Yours must be a coherent arc: the hook creates a need, instruction names the skill, the worked example shows it, guided practice removes the guessing, independent work demands it, and the exit ticket proves it — all anchored to ONE ${def.anchorLabel.toLowerCase()} and reusing the SAME vocabulary and the SAME evidence throughout.
+The single most common failure is a pack that is a pile of disconnected worksheets. Yours must be a coherent arc: the hook creates a need, instruction names the skill, the worked example shows it, guided practice removes the guessing, independent work demands it, and the exit ticket proves it — reusing the SAME vocabulary and the SAME evidence throughout, and every page connected to the ${def.anchorLabel.toLowerCase()}.
+
+CONNECTED does not mean every page runs ON the ${def.anchorLabel.toLowerCase()}. When the lesson introduces a NEW SKILL, the strongest thing you can do is teach that skill first on a topic that needs no research at all — set \`practiceTopic\` and mark those pages \`runsOn: "practice"\` — and only then hand it over to the real ${def.anchorLabel.toLowerCase()}, where the same build is run again for real. A new skill is a FORM; teaching a new form on unfamiliar content loads both at once and a student fails at both. Hold the content trivial while the form is new, then hold the form fixed while the content gets hard.
+
+The transfer is what makes it coherent, so the transfer is NOT optional: practice pages must be followed by later pages that pick the same skill back up on the ${def.anchorLabel.toLowerCase()}. A practice topic that never hands over IS the disconnected worksheet, and it fails review. If the lesson introduces no new form — it deepens a skill students already have — leave \`practiceTopic\` empty and run every page on the ${def.anchorLabel.toLowerCase()}; inventing a practice topic for a lesson that does not need one just costs a page.
 
 NON-NEGOTIABLE RULES:
 1. NEVER fabricate citations. Evidence/source cards may only cite real, well-known publications from major institutions (World Bank, IMF, OECD, UN agencies, major universities, established research institutes, reputable news organizations). If unsure a specific publication exists, use a broader real publication from that institution. Every card is human-verified before publishing — implausible citations get the whole pack rejected.
@@ -1375,6 +1500,27 @@ NON-NEGOTIABLE RULES:
 4. The ${def.anchorLabel.toLowerCase()} appears verbatim wherever referenced — never reworded.
 5. Every student prompt has an expectedAnswer for the teacher answer key — for open prompts, describe what strong vs. weak answers look like, with a concrete example of each.
 6. Classroom-usable as-is: exact timings, exact instructions a student can follow without the teacher re-explaining.
+7. THE STUDENT PAGE CARRIES ITS OWN COACHING. Every prompt where a student writes something takes a \`guide\` and, where the page has a characteristic wrong move, a \`trap\`. Both PRINT ON THE STUDENT'S SHEET, next to the box, and they are the difference between a page a student can work and a page the teacher has to narrate from the answer key.
+   - \`guide\` — one line, ≤18 words, imperative, addressed to the student BEFORE they write. It names the MOVE, never the answer: "Say who acts and what stops." / "Name the source, then one number, then what it means for a family."
+   - \`trap\` — one line, ≤18 words, the specific wrong move students make in THIS box, phrased so a student can test their own sentence against it: "Do not repeat the Point in new words." / "Do not claim more than your card counted."
+   - \`expectedAnswer\` stays exactly what it is: the TEACHER'S key, written after the fact, for marking and the debrief.
+   These three must not say the same thing three times. If your \`guide\` would give away the answer, it is an expectedAnswer and it is in the wrong field; cut it back to the move. If your \`trap\` is generic ("do not be vague"), delete it — a trap that fits any page teaches nothing. Leave \`trap\` empty rather than pad it.
+8. EVERY PAGE SAYS WHY IT EXISTS. Each activity takes a \`whyItMatters\`: one or two sentences, addressed to the STUDENT, answering the question they ask silently — why is this page worth my fourteen minutes? It is not \`instructions\` (what to do) and not \`hiddenJudgeMove\` (what wins the round, teacher-facing). Write it the way a coach says it out loud: "A judge trusts the debater who can say what the other side gets right." / "A side that only says no gives a judge nothing to vote for." / "Debaters improve one named fix at a time."
+   NO TWO PAGES MAY SHARE ONE. A reason to care that fits every page is boilerplate, and printing boilerplate teaches a student that the answer to "why am I doing this" is nothing.
+9. THE EXIT TICKET CARRIES A REAL INSTRUMENT (field: \`exitBallot\`), not a reflection prompt. Four parts:
+   - \`rows\`: 3–5 things a PARTNER marks, each one a criterion THIS PACK ALREADY TAUGHT, restated in the words it was taught in, with the observable test beside it. If a row judges something no earlier page shows, cut it — you are assessing what nobody was taught.
+   - \`errors\`: a CLOSED list of 3–6 named failures the student marks ONE of. Closed on purpose: naming your own failure from a blank page is a skill above this level, and a fixed vocabulary is what lets a coach say "that is a number three again" in week six.
+   - \`repairs\`: 2–4 named moves. Between them they must answer every error you listed — a student told what went wrong and given no move is worse off than one told nothing.
+   - \`product\`: what they physically leave holding. Say it plainly ("a rewritten sentence, not a score").
+   The rows are the same criteria as the pack's successCriteria wherever they line up. A ballot and a rubric that disagree teach the student to ignore both.
+10. EVERY ABSTRACTION SHIPS A TEST THE STUDENT CAN RUN (field: \`passesWhen\` on each worked-example layer). Do not only name the parts of the skill — give each part an OBSERVABLE test a student applies to their own sentence, and make each test a different shape rather than four rewordings of "is it good":
+   "A stranger could repeat it after hearing it once." / "It answers why, and does not say the Point again." / "The judge could write down both the number and who said it." / "It names the decision, and not only the topic."
+   The test must be one two students would AGREE on. "Is it clear?" fails that; "could a stranger repeat it" passes it. These are also where the exit ballot's rows come from — write them so they can be restated as ballot criteria without change.
+11. EVIDENCE CARDS GET JOBS, NOT JUST PARAGRAPHS (field: \`cardJobs\` on the evidence page). Hand each card ONE named job rather than asking every question of every card — three cards with one job each is a page a class finishes; three cards with three jobs each is a page nobody does. Use \`cardId\` to point at a real card in the deck, name the job in the page's own words, and write \`instruction\` as the one line the student acts on:
+   THE SPEECH LINE — "Write the sentence you would say out loud. Use one source and one number."
+   THE LIMIT — "Say what this does not show, before the other side says it."
+   THE WEIGH — "Write why this cost should decide the round."
+   The LIMIT job is the one that matters most and the one most often skipped: it turns a card's scope from a caveat printed underneath into something the student has to be able to say.
 
 SUBJECT TRACK — ${def.label.toUpperCase()}:
 ${def.aiGuidance}`,
@@ -1383,7 +1529,7 @@ ${def.aiGuidance}`,
   if (exemplarContent) {
     blocks.push({
       type: "text",
-      text: `GROUNDING EXEMPLAR — the approved, published Ascent pack that most closely matches this lesson's format, level, and skill, included ONLY as a quality bar. Match its density, texture, and rigor: each page carries several interlocking components.
+      text: `GROUNDING EXEMPLAR — the approved, published pack from this school's own library that most closely matches this lesson's format, level, and skill, included ONLY as a quality bar. Match its density, texture, and rigor: each page carries several interlocking components.
 
 ⚠️ THIS IS A STANDARD TO MEET, NOT A TEMPLATE TO FILL IN. Your lesson must be visibly a different lesson, not a reskin. Specifically you must NOT reuse:
 - its page titles (invent your own ALL-CAPS titles that fit YOUR topic and skill)
@@ -1449,6 +1595,12 @@ ${hints.sourceMaterial.trim()}
 ${hints.recurringCorrections}
 `
         : ""
+    }${
+      hints.recentActivity
+        ? `
+🔁 VARIETY, FOR THIS TEACHER SPECIFICALLY: ${hints.recentActivity}
+`
+        : ""
     }
 THEMING WORLD — ${
       hints.designMotif
@@ -1502,6 +1654,9 @@ You are writing the NEXT lesson in that sequence. Therefore:
  */
 function isPermanent(err: unknown): boolean {
   if (err instanceof RefusalError) return true;
+  /* A run that has spent its budget must not retry — retrying is precisely the
+     runaway the ceiling exists to stop, and each attempt costs real money. */
+  if (err instanceof BudgetExceededError) return true;
   const status = (err as { status?: number })?.status;
   return status !== undefined && [400, 401, 403, 404, 413, 422].includes(status);
 }
@@ -1535,7 +1690,38 @@ export function describeAiError(err: unknown, fallback = "AI request failed."): 
   if (/overloaded|529/.test(raw)) {
     return "The model is overloaded right now — try again in a minute.";
   }
+  /* A ZodError's message IS a JSON array of issues, so returning `raw` put
+     this on a teacher's screen, in a toast, after a minute of waiting:
+       [ { "origin": "number", "code": "too_small", "minimum": 1,
+           "path": [ "microFlow", "captures" ] … } ]
+     Which is a stack trace with a nicer font. It says nothing the reader can
+     act on and quite a lot about how much the product respects them.
+
+     The paths are the useful part — they name the field the model got wrong —
+     so they are kept, in English, and the raw JSON is dropped. */
+  if (raw.trimStart().startsWith("[") && /"code"\s*:/.test(raw)) {
+    const fields = zodPaths(raw);
+    return fields.length > 0
+      ? `The model returned something this pack's rules reject (${fields.join(", ")}). Nothing was changed — run it again, and if it keeps happening, edit that field by hand.`
+      : "The model returned content that didn't fit the lesson format. Nothing was changed — try again.";
+  }
   return raw || fallback;
+}
+
+/** The dotted field paths out of a serialised ZodError, deduped and capped. */
+function zodPaths(raw: string): string[] {
+  try {
+    const issues = JSON.parse(raw) as { path?: (string | number)[] }[];
+    const seen = new Set<string>();
+    for (const i of issues) {
+      const p = (i.path ?? []).filter((s) => typeof s === "string").join(".");
+      if (p) seen.add(p);
+      if (seen.size >= 3) break;
+    }
+    return [...seen];
+  } catch {
+    return [];
+  }
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -1616,6 +1802,11 @@ async function runStage<T>(
   const MAX_ATTEMPTS = 3;
   const strict = betaZodOutputFormat(schema);
   let lastErr: unknown;
+  /* Raised only when a call is actually cut off mid-answer. See the note on
+     MAX_OUTPUT in lib/model-policy.ts: every stage used to send 64000, which is
+     not a budget but the absence of one — a single runaway Opus call at that
+     ceiling is $1.60, a third of a whole build, and nothing would have noticed. */
+  let ceiling = maxOutputFor(task);
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     // First attempt rides the shared cached grammar; any retry escalates to the
     // stage's own grammar, so a draft that came back malformed is re-asked with
@@ -1624,7 +1815,7 @@ async function runStage<T>(
     const enforced = attempt > 1;
     try {
       const stream = aiStream(task, {
-        max_tokens: 64000,
+        max_tokens: ceiling,
         thinking: { type: "adaptive" },
         output_config: { format: enforced ? strict : ENVELOPE_FORMAT },
         system: systemBlocks(subject, hints),
@@ -1641,6 +1832,18 @@ async function runStage<T>(
       if (message.stop_reason === "refusal") {
         throw new RefusalError(
           "The model declined this request. Adjust the topic and retry."
+        );
+      }
+      /* TRUNCATION IS DIAGNOSED, NOT GUESSED AT.
+         A response cut off at the ceiling produces a half-written JSON body,
+         which fails `schema.parse` and looks exactly like a malformed draft —
+         so the retry would re-ask at the SAME ceiling and be cut off again,
+         burning three full-price calls to arrive nowhere. Naming it lets the
+         one retry that can actually succeed be the one that runs. */
+      if (message.stop_reason === "max_tokens") {
+        ceiling = Math.min(64000, Math.round(ceiling * 1.6));
+        throw new Error(
+          `The ${task} stage hit its output ceiling. Retrying once with more room.`
         );
       }
       const text = message.content.find((b) => b.type === "text")?.text ?? "";
@@ -1708,7 +1911,8 @@ function buildHints(
   siblings: MaterialRow[],
   classroomEvidence: string,
   exemplar: unknown,
-  recurringCorrections = ""
+  recurringCorrections = "",
+  recentActivity = ""
 ): LevelHints {
   return {
     gradeBand: pack.gradeBand,
@@ -1719,6 +1923,7 @@ function buildHints(
     classroomEvidence,
     exemplar,
     recurringCorrections,
+    recentActivity,
     formatGuidance: formatForPrompt(pack.format, subject),
     debateFormatGuidance: debateFormatForPrompt(pack.debateFormat),
     designMotif: pack.designMotif,
@@ -1885,6 +2090,30 @@ export interface StageEvent {
    * of why. If a stage is allowed to fail, the reason has to survive it.
    */
   skipped?: string;
+  /**
+   * "The next stage's work is already bought — do not stop after this one."
+   *
+   * ── THE BUG THIS EXISTS TO PREVENT, OBSERVED IN A REAL BUILD ────────────
+   * `foundation` and `evidence` are issued together in one `Promise.all`, so by
+   * the time EITHER yields, both model calls have completed and both have been
+   * billed. They are then yielded one after the other — and `consumeLeg`
+   * checks its time budget between them.
+   *
+   * When the pair takes longer than the leg budget (an elite pack's evidence
+   * deck reliably does), the leg breaks immediately after `foundation`, and the
+   * evidence result — already paid for — is discarded without ever being
+   * applied to the pack or persisted. The next leg finds `evidenceCards` still
+   * empty and runs it again. And again.
+   *
+   * Measured on one 14-page elite build: five evidence calls, none persisted,
+   * 90.4¢ of a 92.4¢ bill, twelve minutes, zero evidence cards. It is an
+   * unbounded spend loop that makes no progress, and it is invisible to the
+   * stall guard because `foundation` completes on every leg.
+   *
+   * So a stage that is holding a finished sibling result says so, and the leg
+   * refuses to stop on that boundary. The budget still applies at the next one.
+   */
+  holdLeg?: boolean;
   /** attached to the final events: what the validate pass fixed */
   repair?: RepairSummary;
   /** attached to the final events: what content QA graded and repaired */
@@ -1986,7 +2215,9 @@ export async function* generateLessonPack(
     inherit?: { css: string; note: string } | null;
     /** injected so the control flow is testable without an API key */
     generate?: (pack: LessonPack, avoid: string) => Promise<DesignSystem>;
-  } = {}
+  } = {},
+  /** this teacher's recent packs leaned on the same activity shapes — see lib/analytics.ts */
+  recentActivity = ""
 ): AsyncGenerator<StageEvent> {
   const def = subjectDef(subject);
   // Resume-aware: unless `fresh`, keep whatever the last (interrupted) run left
@@ -1994,7 +2225,7 @@ export async function* generateLessonPack(
   // a clean rebuild.
   let pack: LessonPack = fresh ? clearGenerated(initial) : { ...initial };
   let outline: Outline | null = null;
-  const hints = buildHints(subject, initial, siblings, classroomEvidence, exemplar, recurringCorrections);
+  const hints = buildHints(subject, initial, siblings, classroomEvidence, exemplar, recurringCorrections, recentActivity);
 
   // ── 1. Outline ──
   // Priority: a remix inherits a proven skeleton; else an author-reviewed
@@ -2210,7 +2441,11 @@ Every card must be a source NOT already used by an earlier lesson in this series
       vocabulary: foundationRes.vocabulary,
     });
   }
-  yield { type: "stage-done", stage: "foundation", pack };
+  /* `holdLeg` because the evidence call in the Promise.all above has ALREADY
+     completed and been billed. Letting the leg stop on this boundary throws
+     that result away and the next leg buys it again — see the note on holdLeg
+     in StageEvent for the build where that cost 90¢ and produced nothing. */
+  yield { type: "stage-done", stage: "foundation", pack, holdLeg: true };
   if (evidenceRes) {
     pack = lessonPackSchema.parse({ ...pack, evidenceCards: evidenceRes.cards });
   }
@@ -2468,7 +2703,16 @@ Leave unused block arrays empty.`;
   // A lesson can't be taught from pages alone, so give it a plan straight away:
   // derived from the outline, no model call, replaced by the teacher-guide stage.
   pack = withProvisionalPlan(pack);
-  yield { type: "stage-done", stage: "activities-1", pack };
+  /* THE SAME HOLD AS foundation → evidence, and for the same reason.
+     `restSettled` went in flight above, before this await — so by the time the
+     spine yields, the remaining page batches are already running and already
+     being billed. A leg that stops on this boundary abandons them mid-flight
+     and the next leg re-issues every one.
+     Measured on a 14-page elite build: pages arrived in three separate waves
+     4 → 9 → 14 across eighteen minutes, when all three batches had been issued
+     concurrently in the first thirty seconds. Most of that wall-clock was the
+     same pages being written more than once. */
+  yield { type: "stage-done", stage: "activities-1", pack, holdLeg: true };
 
   const settled = await restSettled;
   restBatches.forEach((b, k) => {
@@ -2503,6 +2747,8 @@ ${pack.activities.map((a, i) => `${i + 1}. [${a.kind}] ${a.title} (${a.durationM
 
 Write the teacher pack: cohort label; assessment line; next-lesson pointer (invent a sensible next skill); a materials checklist (one · separated line); a minute-by-minute timing plan covering 0–${pack.durationMin} in order, one row per phase, WHO ∈ T/Ss/T+Ss, each WHAT with concrete teacher moves and page references; 3–5 launch scripts (30-second verbatim teacher scripts for key transitions); a prep & pitfalls paragraph with CFU questions; and a grading rubric with 4 bands (${subjectDef(subject).requiresRubric ? "mandatory for this track" : "include it — it raises quality"}).
 
+ifAheadOfSchedule — one or two sentences: what to do with the room if this lesson runs faster than planned. This is NOT the fast-finisher line on an individual page (that's for one student while the rest of the room catches up) — it's what the WHOLE CLASS does with unplanned extra minutes: a named page to extend, a harder round of the drill, a discussion question the pack doesn't otherwise ask. Never "review the material" or other filler — name the actual move.
+
 AND pageCoaching — ONE ENTRY PER STUDENT PAGE, in page order, using each page title verbatim in the page field. This is what makes a pack runnable by the two adults who are actually in the room, and it is the part coaches use most:
 - headTeacher: what the LEAD does to drive this page — the move, not a description of the page.
 - assistant: what the SECOND adult watches while the lead drives — which students, which error. Something different from the lead, never a restatement.
@@ -2518,10 +2764,21 @@ A coach reading a struggling room as a broken lesson is how this design dies in 
       "teacher-guide",
       hints
     );
-    // the real plan, so the provisional flag comes off with it
+    /* THE ARITHMETIC IS FIXED IN CODE, NOT RE-ASKED FOR.
+       The model writes the phases, who leads and the teacher moves — all
+       judgement. The start and end minutes are addition, and when they did not
+       land the validate pass below repaired them by regenerating this entire
+       stage: the largest call in the build, spent on a column of integers. The
+       reflow keeps every word the model wrote and only makes the numbers run in
+       order and reach the end of the lesson, so `timing-plan` cannot fail from
+       here and that repair path is now unreachable. */
     pack = lessonPackSchema.parse({
       ...pack,
-      teacherGuide: { ...guide, provisional: false },
+      teacherGuide: {
+        ...guide,
+        timingPlan: reflowTimingPlan(guide.timingPlan, pack.durationMin),
+        provisional: false,
+      },
     });
     yield { type: "stage-done", stage: "teacher-guide", pack };
   }
@@ -2631,7 +2888,13 @@ Grade it hard against the 8 quality standards in your instructions. Then identif
         // a criterion the pages never touch is a broken promise on the cover
         "criteria-taught",
       ];
-      const TEACHER = ["timing-plan", "rubric"];
+      /* `timing-plan` is deliberately NOT here any more. It is now repaired in
+         code the moment the guide is written (see reflowTimingPlan), so it
+         cannot reach this point — and leaving it listed would mean a rubric
+         failure and an arithmetic failure both regenerate the whole guide, the
+         largest call in the build. `rubric` genuinely needs the model: it is
+         four written descriptors, not a sum. */
+      const TEACHER = ["rubric"];
 
       if (failed(EVIDENCE)) {
         try {
@@ -2691,7 +2954,7 @@ Grade it hard against the 8 quality standards in your instructions. Then identif
             subject,
             pack,
             "teacher-guide",
-            `Fix EXACTLY these teacher-guide rule failures:\n${failText(TEACHER)}\nThe minute-by-minute timing plan must run in order and reach minute ${pack.durationMin}.`,
+            `Fix EXACTLY these teacher-guide rule failures:\n${failText(TEACHER)}`,
             classroomEvidence
           );
         } catch {
@@ -2709,11 +2972,113 @@ Grade it hard against the 8 quality standards in your instructions. Then identif
         pageFix.set(i, [...(pageFix.get(i) ?? []), why]);
       };
 
+      // Student-facing coaching, per page that owes it. This is a FILL, not a
+      // rewrite: the page's teaching is already there and the repair adds the
+      // two lines that carry it to the student, so the instruction is explicit
+      // that nothing else on the page may move.
+      if (failed(["student-coaching"])) {
+        pack.activities.forEach((a, i) => {
+          if (!COACHED_KINDS.includes(a.kind)) return;
+          if (a.prompts.length === 0 || a.prompts.every((p) => p.guide?.trim())) return;
+          note(
+            i,
+            `Every prompt on this page needs a student-facing \`guide\`: one line, ≤18 words, imperative, naming the MOVE the student makes — not the answer, which stays in expectedAnswer. Add a \`trap\` too wherever this page has a characteristic wrong move ("Do not repeat the Point in new words"), and leave \`trap\` empty rather than write a generic one. Change nothing else on the page.`
+          );
+        });
+      }
+
+
+      // The exit instrument. Targeted at the exit ticket only, and phrased as a
+      // fill so a repair cannot quietly rewrite the assessment task itself.
+      if (failed(["exit-ballot", "ballot-tests-what-was-taught"])) {
+        pack.activities.forEach((a, i) => {
+          if (a.kind !== "exit-ticket") return;
+          note(
+            i,
+            `Fill \`exitBallot\` on this page: 3–5 \`rows\` (each a criterion THIS pack already taught, with its observable test), a closed list of 3–6 named \`errors\` the student marks one of, 2–4 \`repairs\` that between them answer every one of those errors, and \`product\` — what the student leaves holding. Do not invent new criteria here; take them from the pack's successCriteria and the pass conditions taught earlier. Keep the rest of the page as it is.`
+          );
+        });
+      }
+
+
+      // Nothing marked droppable on a long pack. Section-level, because which
+      // pages are extension work is a fact about the SEQUENCE, not about any one
+      // page — a page cannot know it is the skippable one.
+      if (failed(["cut-path"])) {
+        try {
+          pack = await regenerateSection(
+            subject,
+            pack,
+            "vocabulary",
+            `This pack is long enough that a class will run out of time on it, and nothing is marked droppable:\n${failText(["cut-path"])}\n\nSet \`optional: true\` on the one or two pages that are genuinely extension work — the ones a coach could skip and still land the lesson. NEVER mark the exit ticket, the worked example, or the first independent build: those are what the lesson exists to reach. Change nothing else.`,
+            classroomEvidence
+          );
+        } catch {
+          /* keep the pre-repair pack */
+        }
+      }
+
+
+      // A practice topic that never hands over. This one is NOT a page fill —
+      // the fault is the pack's sequence, not any one page's content, and
+      // rewriting a page cannot fix which topic the pack transfers on. So it
+      // goes to the outline/foundation repair, which is the only stage that can
+      // move the handover.
+      if (failed(["practice-transfers", "practice-topic-declared"])) {
+        try {
+          pack = await regenerateSection(
+            subject,
+            pack,
+            "vocabulary",
+            `The pack declares a practice topic ("${pack.practiceTopic}") but the transfer to the real ${subjectDef(subject).anchorLabel.toLowerCase()} is broken:\n${failText(["practice-transfers", "practice-topic-declared"])}\n\nFix the SEQUENCE, not the teaching. The skill is taught first on the practice topic (pages marked runsOn:"practice"), and LATER pages pick the same skill back up on the real anchor (runsOn:"anchor"). If the practice topic is not earning its place in this lesson, clear \`practiceTopic\` and set every page to runsOn:"anchor" — that is a valid outcome and better than a handover that does not happen.`,
+            classroomEvidence
+          );
+        } catch {
+          /* keep the pre-repair pack */
+        }
+      }
+
+      // Cards printed with nothing to do with them. A fill, targeted at the
+      // evidence page, and it names the three jobs so the repair cannot invent
+      // a fourth that the rest of the pack does not teach.
+      if (failed(["cards-have-jobs", "card-jobs-resolve"])) {
+        const deck = pack.evidenceCards.map((c) => c.id).join(", ");
+        pack.activities.forEach((a, i) => {
+          if (a.kind !== "evidence-study") return;
+          note(
+            i,
+            `Fill \`cardJobs\` on this page: one entry per card you want worked, each naming a real card from the deck (${deck || "the pack's evidenceCards"}) in \`cardId\`, a job in \`job\`, and one student-facing line in \`instruction\`. Use the three jobs this pack teaches — the speech line (the sentence said out loud), the limit (what the card does not show, said before the other side says it), and the weigh (why it should decide the round). ONE job per card, not three. Leave the rest of the page unchanged.`
+          );
+        });
+      }
+
+      // A page nobody works on. The fix is one real task, not a rewrite — and
+      // saying so matters most on the i-do, where the temptation is to turn a
+      // modelled build into a worksheet and lose the modelling.
+      if (failed(["page-does-something"])) {
+        pack.activities.forEach((a, i) => {
+          const surfaces =
+            a.prompts.length +
+            a.sortItems.length +
+            a.matchPairs.length +
+            a.frames.length +
+            (a.quiz?.length ?? 0) +
+            (a.echoCheck?.tests?.length ?? 0) +
+            (a.standAndDeliver?.trim() ? 1 : 0);
+          const need = HEAVY_PRODUCTION_KINDS.includes(a.kind) ? 2 : 1;
+          if (surfaces >= need) return;
+          note(
+            i,
+            `A student currently does nothing on this page. Add ${need === 2 ? "at least two things" : "at least one thing"} they must produce or decide — a prompt, a sort, a match, a quiz check or a stand-and-deliver. ${a.kind === "i-do" ? "This is a MODELLED page: keep the worked example exactly as it is and add one short check the class answers while watching, e.g. which layer the judge would miss if you stopped early." : "Keep the page's existing content and purpose; add the task, do not replace the teaching."}`
+          );
+        });
+      }
+
       if (failed(["page-density"])) {
         const young =
           /\b(4|5|6|7|8)\b/.test(pack.gradeBand || "") &&
           !/\b(9|10|11|12)\b/.test(pack.gradeBand || "");
-        const ceiling = young ? 200 : 300;
+        const ceiling = young ? 240 : 380;
         pack.activities.forEach((a, i) => {
           const n = studentReadWords(a);
           if (n > ceiling) {
@@ -2858,9 +3223,56 @@ Grade it hard against the 8 quality standards in your instructions. Then identif
             if (!a.hiddenJudgeMove?.trim()) needsJudge.add(i);
           });
         }
-        const targets = [...new Set([...needsFinisher, ...needsJudge])].sort(
-          (x, y) => x - y
-        );
+        /* The widened set. Each is a short string or a boolean the page is
+           missing — see fieldFillSchema for why none justifies a rewrite. */
+        const needsWhy = new Set<number>();
+        const needsCoaching = new Map<number, number[]>();
+        const needsFigure = new Map<number, number[]>();
+        let needsCut = false;
+        if (failed(["why-this-page"])) {
+          pack.activities.forEach((a, i) => {
+            if (!a.whyItMatters?.trim()) needsWhy.add(i);
+          });
+        }
+        if (failed(["student-coaching", "coaching-is-not-the-key"])) {
+          pack.activities.forEach((a, i) => {
+            if (!COACHED_KINDS.includes(a.kind)) return;
+            const idx = a.prompts
+              .map((pr, j) => {
+                const g = pr.guide?.trim() ?? "";
+                const t = pr.trap?.trim() ?? "";
+                const tooLong =
+                  g.split(/\s+/).length > 22 || t.split(/\s+/).length > 22;
+                return !g || tooLong ? j : -1;
+              })
+              .filter((j) => j >= 0);
+            if (idx.length) needsCoaching.set(i, idx);
+          });
+        }
+        if (failed(["figures-state-the-exact", "figures-sourced"])) {
+          pack.activities.forEach((a, i) => {
+            const idx = a.figures
+              .map((f, j) =>
+                !f.source.trim() ||
+                ((f.kind === "unit-chart" || f.kind === "ratio") && !f.exact.trim())
+                  ? j
+                  : -1
+              )
+              .filter((j) => j >= 0);
+            if (idx.length) needsFigure.set(i, idx);
+          });
+        }
+        if (failed(["cut-path"])) needsCut = true;
+
+        const targets = [
+          ...new Set([
+            ...needsFinisher,
+            ...needsJudge,
+            ...needsWhy,
+            ...needsCoaching.keys(),
+            ...needsFigure.keys(),
+          ]),
+        ].sort((x, y) => x - y);
         if (targets.length > 0) {
           try {
             const filled = await runStage(
@@ -2875,6 +3287,13 @@ ${targets
     const want = [
       needsFinisher.has(i) ? "fastFinisher" : "",
       needsJudge.has(i) ? "hiddenJudgeMove" : "",
+      needsWhy.has(i) ? "whyItMatters" : "",
+      needsCoaching.has(i)
+        ? `coaching for prompt(s) ${needsCoaching.get(i)!.join(", ")}`
+        : "",
+      needsFigure.has(i)
+        ? `figure line(s) for figure(s) ${needsFigure.get(i)!.join(", ")}`
+        : "",
     ].filter(Boolean);
     return `PAGE ${i} [${a.kind}] "${a.title}" — needs: ${want.join(", ")}\n  what students do here: ${(a.instructions || "").slice(0, 200)}`;
   })
@@ -2882,6 +3301,14 @@ ${targets
 
 fastFinisher — ONE sentence giving whoever finishes early something genuinely harder on THIS page's task. Never "help a partner", never busywork, never a re-read.
 hiddenJudgeMove — ≤32 words naming what the JUDGE is actually deciding when two teams both attempt this page's move: the difference between a shallow execution and a winning one. Pattern: "The easy version does X. The team that wins does Y — because Z." Never generic advice like "use your evidence".
+
+whyItMatters — one or two sentences telling the STUDENT why this page is worth their time. Not what to do, and not what wins a round. NO TWO PAGES MAY SHARE ONE: a reason that fits every page teaches a student that the answer to "why am I doing this" is nothing.
+coaching — for each prompt index listed, \`guide\` is ONE line under 22 words naming the MOVE the student makes (never the answer, which stays in expectedAnswer), and \`trap\` is the specific wrong move made in THAT box. Leave trap "" rather than write one that would fit any page at all.
+figures — for each figure index listed, \`exact\` is the unrounded truth wherever the drawing rounds ("4.4% measured; 11.8% estimated"), and \`source\` is where the numbers came from. A chart is evidence and carries its attribution like any card.${
+              needsCut
+                ? `\n\nALSO set \`optional: true\` on the ONE or TWO pages that are genuinely extension work — this pack is long enough that a class will run out of time on it and nothing is marked droppable. NEVER the exit ticket, the worked example, or the first independent build: those are what the lesson exists to reach.`
+                : ""
+            }
 
 Leave a field as "" only if the page genuinely cannot carry it.`,
               // A few short strings — the cheapest task in the table.
@@ -2904,6 +3331,32 @@ Leave a field as "" only if the page genuinely cannot carry it.`,
                     needsJudge.has(i) && f.hiddenJudgeMove.trim()
                       ? f.hiddenJudgeMove.trim()
                       : a.hiddenJudgeMove,
+                  whyItMatters:
+                    needsWhy.has(i) && f.whyItMatters.trim()
+                      ? f.whyItMatters.trim()
+                      : a.whyItMatters,
+                  /* Only ever set TRUE from a fill. A model deciding a page is
+                     CORE when the author marked it droppable is not a fill, it
+                     is an opinion about the lesson. */
+                  optional: f.optional === true ? true : a.optional,
+                  prompts: a.prompts.map((pr, j) => {
+                    const c = f.coaching.find((x) => x.prompt === j);
+                    if (!c) return pr;
+                    return {
+                      ...pr,
+                      guide: c.guide.trim() || pr.guide,
+                      trap: c.trap.trim() || pr.trap,
+                    };
+                  }),
+                  figures: a.figures.map((fig, j) => {
+                    const g = f.figures.find((x) => x.figure === j);
+                    if (!g) return fig;
+                    return {
+                      ...fig,
+                      exact: g.exact.trim() || fig.exact,
+                      source: g.source.trim() || fig.source,
+                    };
+                  }),
                 };
               }),
             });
@@ -3162,6 +3615,9 @@ roundApplication — the sentence the debater says out loud, starting "Judge,". 
         contentQaJson: JSON.stringify({
           ...pass.report,
           contentHash: packContentHash(pass.pack),
+          // Per-page review scope — see lib/qa-scope.ts. Stamped here as well as
+          // in the manual route so a build-time review is comparable too.
+          scope: captureQaScope(pass.pack),
         }),
         contentQaAt: new Date().toISOString(),
       });
@@ -3478,7 +3934,15 @@ export async function regenerateSection(
       "teacher-guide",
       hints
     );
-    return lessonPackSchema.parse({ ...pack, teacherGuide: out });
+    /* Same reflow as the build stage: a rewritten guide's minutes are made to
+       add up in code rather than by asking again. See reflowTimingPlan. */
+    return lessonPackSchema.parse({
+      ...pack,
+      teacherGuide: {
+        ...out,
+        timingPlan: reflowTimingPlan(out.timingPlan, pack.durationMin),
+      },
+    });
   }
   // single activity
   const i = section.activityIndex;

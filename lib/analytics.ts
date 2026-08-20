@@ -1,6 +1,7 @@
 import { type CorrectionRow, type MaterialRow } from "./db";
 import { STATUSES, type Status } from "./workflow";
 import { correctionTag } from "./correction-tags";
+import type { LessonPack } from "./lesson-pack-schema";
 
 /**
  * Memory Engine, closing the loop: turn this subject's RECURRING corrections
@@ -49,6 +50,36 @@ export function recurringCorrectionGuidance(
   return recurringCorrections(corrections, subject, opts)
     .map((x) => `- ${x.label} (flagged ${x.count}×): ${x.description}`)
     .join("\n");
+}
+
+/**
+ * "Don't use the same activities for a long time" — a teacher's OWN recent
+ * builds, not the org's. Individual use is the core unit here: two coaches at
+ * the same school teach differently, so this must not average across them.
+ *
+ * Counts how often each activity `kind` showed up across this teacher's own
+ * recent packs and, when one has become the default reach rather than a real
+ * choice, says so — a nudge into the activities-generation prompt, not a
+ * gate. A teacher who deliberately repeats a drill for spaced practice is not
+ * a bug, so this never blocks; it only asks the model to notice.
+ *
+ * Returns "" below two prior packs — nothing has had the chance to repeat yet,
+ * and warning against a pattern of one is noise, not signal.
+ */
+export function recentActivityGuidance(recentPacks: MaterialRow[]): string {
+  if (recentPacks.length < 2) return "";
+  const counts = new Map<string, number>();
+  for (const m of recentPacks) {
+    const pack = m.content as LessonPack;
+    const kinds = new Set((pack.activities ?? []).map((a) => a.kind));
+    for (const k of kinds) counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const overused = [...counts.entries()]
+    .filter(([, count]) => count > recentPacks.length / 2)
+    .sort((a, b) => b[1] - a[1])
+    .map(([kind, count]) => `${kind} (${count} of the last ${recentPacks.length})`);
+  if (overused.length === 0) return "";
+  return `This teacher's recent lessons leaned on the same activity shapes: ${overused.join(", ")}. Vary what this pack reaches for — pick the shape each page's job actually calls for, not the one that worked last time.`;
 }
 
 /**

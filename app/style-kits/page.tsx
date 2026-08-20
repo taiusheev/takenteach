@@ -17,7 +17,7 @@ export default async function StyleKitsPage() {
   const isFounder = role === "founder";
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-10">
+    <div className="mx-auto max-w-4xl">
       <div className="mb-8 flex items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-4xl text-fg1">Style Kits</h1>

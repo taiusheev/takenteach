@@ -141,7 +141,9 @@ export async function createOrganization(input: {
      twice — a fresh database has no organization for it to belong to, and "the
      default kit" stopped being a property of the installation. Without this,
      the first school to edit theirs would restyle every other school's covers. */
-  await createDefaultStyleKit(orgId);
+  /* Seeded with the school's OWN name, so the first lesson they print carries
+     their masthead rather than this product's. See brandedKit in lib/db.ts. */
+  await createDefaultStyleKit(orgId, undefined, input.name);
 
   return (await getOrganization(orgId))!;
 }

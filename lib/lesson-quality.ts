@@ -134,14 +134,20 @@ export function gradeBandGuidance(band: string | undefined): string {
   // Younger bands must read like a worksheet, not an essay: hard per-block word
   // caps stop a page turning into a wall of text a novice won't read.
   const young = /\b(4|5|6|7|8)\b/.test(b) && !/\b(9|10|11|12)\b/.test(b);
+  // The per-block caps are the ones that matter and they are unchanged: what
+  // makes a novice stop reading is one long PARAGRAPH, not a page carrying many
+  // short labelled cells. The whole-page number moved (130 → ~200) because the
+  // old figure was being read as a budget to spend rather than a wall of prose
+  // to avoid, and it fought the coaching lines that now print beside each box.
+  // The gate sits at 240 — see `page-density` in lib/checklist.ts.
   const caps = young
-    ? ` These are NOVICE / younger readers — keep text SPARSE and scannable: no single readable block over ~22 words; scene lines and prompt labels ≤14 words; a keyIdea ≤20 words; a worked-example layer ≤25 words. Total words a student must READ on any one page should stay under ~130. If an idea needs more, split it across a step list or a second page — never a paragraph.`
+    ? ` These are NOVICE / younger readers — keep text SPARSE and scannable: no single readable block over ~22 words; scene lines and prompt labels ≤14 words; a keyIdea ≤20 words; a worked-example layer ≤25 words. Total words a student must READ on any one page should stay around ~200 and never exceed 240. Density is fine; PARAGRAPHS are not — if an idea needs more room, split it across a step list, a compare table or a second page, never a block of prose.`
     : "";
   // Older bands get the opposite pressure from the novice caps: the risk there
   // is a page a strong student clears in ninety seconds and learns nothing from.
   const floor = young
     ? ""
-    : ` These are OLDER readers — the danger is a page that is too THIN, not too dense. Write at their level: real sentences, technical vocabulary used precisely, examples with genuine complication. A page a capable student finishes in under two minutes without thinking hard is a failed page.`;
+    : ` These are OLDER readers — the danger is a page that is too THIN, not too dense. Write at their level: real sentences, technical vocabulary used precisely, examples with genuine complication. A page a capable student finishes in under two minutes without thinking hard is a failed page. Concretely: aim for roughly 250–350 words of student-facing content on a full page (the ceiling is 380), and at least two things the student must produce or decide. A page carrying one instruction and one blank is below this cohort.`;
   return `Target reading level: ${b}. Calibrate sentence length, vocabulary, and example complexity to this band while keeping the thinking demanding.${caps}${floor}`;
 }
 

@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getMaterial } from "@/lib/db";
+import { getKitForMaterial, getMaterial } from "@/lib/db";
 import { requireActiveSession } from "@/lib/auth/dal";
 import { canEdit } from "@/lib/workflow";
+import { runChecklistFor } from "@/lib/checklist";
 import Builder from "@/components/Builder";
 import SimpleBuilder from "@/components/SimpleBuilder";
 import { LessonPack } from "@/lib/lesson-pack-schema";
@@ -35,6 +36,21 @@ export default async function EditPage(ctx: {
     );
   }
 
+  /* THE CHECKLIST IS COMPUTED HERE, NOT BY A SAVE ON MOUNT.
+     Both editors used to fire a PUT the moment they mounted, purely to get a
+     checklist back for the right rail. That meant opening a lesson to READ it
+     stamped `updated_at` and pushed the pack to the top of "most recent" —
+     the library's recency order quietly recorded visits, not work. It also
+     left the rail empty until a round trip finished. It is a pure function of
+     the content, so the page that already has the content can run it. */
+  const kit = await getKitForMaterial(scope, material.style_kit_id);
+  const checklist = runChecklistFor(
+    material.type,
+    material.content,
+    material.subject,
+    kit?.config
+  );
+
   if (material.type !== "lesson-pack") {
     return (
       <SimpleBuilder
@@ -43,6 +59,7 @@ export default async function EditPage(ctx: {
         subject={material.subject}
         initialTitle={material.title}
         initialContent={material.content}
+        initialChecklist={checklist}
       />
     );
   }
@@ -53,6 +70,7 @@ export default async function EditPage(ctx: {
       subject={material.subject}
       initialTitle={material.title}
       initialPack={material.content as LessonPack}
+      initialChecklist={checklist}
     />
   );
 }

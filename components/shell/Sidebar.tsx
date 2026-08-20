@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { useStored, writeStored } from "./client-value";
@@ -98,6 +98,39 @@ const INSIGHTS: Item = {
 
 const STORAGE_KEY = "tt.sidebar.collapsed";
 
+/**
+ * "Yes, I heard you" — the dot that appears while a navigation is in flight.
+ *
+ * Every page in this product is server-rendered on demand and reads the
+ * database, so a click is always followed by a wait: short on a warm local
+ * database, a real fraction of a second against a hosted one. Without any
+ * acknowledgement the interface looks like it ignored the click, and the
+ * reflex is to click again.
+ *
+ * ── WHY NOT `loading.tsx` ────────────────────────────────────────────────
+ * That is the framework's answer and it is the better one in principle: a
+ * route-level fallback makes navigation feel instant. It does not work in this
+ * app on Next 16.3 with the webpack dev server — the page content streams into
+ * the DOM inside React's hidden staging container and the boundary is never
+ * revealed, so every page stops at its skeleton forever. Verified down to the
+ * hidden node; see docs/DEPLOYMENT.md. This is the honest substitute: smaller,
+ * and it demonstrably works.
+ *
+ * Fixed size and always rendered, toggling only opacity — an indicator that
+ * appears from nothing shifts the layout of the row it is in.
+ */
+function NavPending({ onBrand = false }: { onBrand?: boolean }) {
+  const { pending } = useLinkStatus();
+  return (
+    <span
+      aria-hidden
+      className={`ml-auto h-1.5 w-1.5 shrink-0 rounded-full transition-opacity duration-150 ${
+        onBrand ? "bg-onbrand" : "bg-brand"
+      } ${pending ? "build-pulse opacity-100" : "opacity-0"}`}
+    />
+  );
+}
+
 export default function Sidebar({
   mobileOpen,
   onCloseMobile,
@@ -139,6 +172,7 @@ export default function Sidebar({
       >
         <Icon className="nav-icon" size={17} />
         <span className={collapsed ? "lg:sr-only" : ""}>{item.label}</span>
+        <NavPending />
       </Link>
     );
   };
@@ -195,6 +229,7 @@ export default function Sidebar({
           >
             <IconPlus size={16} />
             <span className={collapsed ? "lg:sr-only" : ""}>New lesson</span>
+            <NavPending onBrand />
           </Link>
         </div>
 

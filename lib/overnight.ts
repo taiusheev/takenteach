@@ -27,6 +27,7 @@ import {
   listAllSubmissions,
   listCorrections,
   listMaterials,
+  listOwnRecentLessonPacks,
   listRounds,
   listSeriesSiblings,
   listStudents,
@@ -39,7 +40,7 @@ import {
 import { describeAiError, generateLessonPack } from "./ai";
 import { avoidDigest, priorDesigns } from "./design-memory";
 import { unitDesign } from "./unit-identity";
-import { recurringCorrectionGuidance } from "./analytics";
+import { recurringCorrectionGuidance, recentActivityGuidance } from "./analytics";
 import { computeTeachingSignal, signalForPrompt } from "./teaching-signal";
 import { squadSignal, squadSignalForPrompt } from "./squad-signal";
 import { type LessonPack } from "./lesson-pack-schema";
@@ -129,6 +130,9 @@ export async function buildInputs(scope: Scope, material: MaterialRow) {
     corrections: recurringCorrectionGuidance(
       await listCorrections(scope),
       material.subject
+    ),
+    recentActivity: recentActivityGuidance(
+      await listOwnRecentLessonPacks(scope, material.id)
     ),
     design: {
       avoid: avoidDigest(await priorDesigns(scope, material.id)),
@@ -233,7 +237,8 @@ export async function runOvernight(
               enabled: opts.autoDesign === true,
               avoid: inputs.design.avoid,
               inherit: inputs.design.inherit,
-            }
+            },
+            inputs.recentActivity
           );
           for await (const event of gen) {
             // Persist per stage, exactly like the live build: an overnight run

@@ -232,6 +232,43 @@ CREATE TABLE IF NOT EXISTS ballot_submissions (
   created_at text NOT NULL DEFAULT ${NOW}
 );
 
+-- WHERE THE AI BUDGET GOES.
+--
+-- One row per metered operation (a build leg, a section rewrite, a QA pass),
+-- carrying the per-task and per-model breakdown as JSON. Usage used to be
+-- written only as a sentence in the activity log — readable by a person,
+-- useless to a query — so "what does a lesson cost us" could not be answered
+-- without reading prose out of a log by hand.
+--
+-- Scoped to the organization like every other content table: one school must
+-- not be able to read another's spend. material_id is nullable because not
+-- every priced operation belongs to a lesson (planning happens before one
+-- exists).
+CREATE TABLE IF NOT EXISTS ai_usage (
+  id ${ID},
+  org_id bigint NOT NULL REFERENCES organizations(id),
+  material_id bigint REFERENCES materials(id),
+  -- what the user was doing: 'build', 'section', 'qa', 'revise', 'design'…
+  operation text NOT NULL,
+  calls integer NOT NULL DEFAULT 0,
+  input_tokens bigint NOT NULL DEFAULT 0,
+  cache_write_tokens bigint NOT NULL DEFAULT 0,
+  cache_read_tokens bigint NOT NULL DEFAULT 0,
+  output_tokens bigint NOT NULL DEFAULT 0,
+  -- Stored in micro-dollars as an integer. A float column for money invites
+  -- the rounding argument later; this cannot drift.
+  usd_micros bigint NOT NULL DEFAULT 0,
+  ms integer NOT NULL DEFAULT 0,
+  budget_mode text NOT NULL DEFAULT '',
+  ok boolean NOT NULL DEFAULT true,
+  -- the per-task / per-model breakdown, for the cost view
+  breakdown text NOT NULL DEFAULT '{}',
+  created_at text NOT NULL DEFAULT ${NOW}
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_usage_org ON ai_usage (org_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_material ON ai_usage (material_id);
+
 -- Every AI mutation overwrites the pack in place. A snapshot is taken BEFORE
 -- each one, so a regeneration that made a page worse is one click from undone.
 CREATE TABLE IF NOT EXISTS material_versions (

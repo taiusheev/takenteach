@@ -33,7 +33,7 @@ export default async function MotionsPage({
   const ages = [...new Set(SEED_MOTIONS.map((m) => m.ageBand))];
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-10">
+    <div className="mx-auto max-w-5xl">
       <div className="mb-6">
         <h1 className="font-display text-4xl text-fg1">Motion Library</h1>
         <p className="mt-1 max-w-2xl text-sm text-fg3">

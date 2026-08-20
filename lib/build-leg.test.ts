@@ -194,4 +194,81 @@ describe("one leg of a build", () => {
     assert.equal(res.finished, false);
     assert.equal(res.stagesCompleted, 0);
   });
+
+  /**
+   * THE CONCURRENT-PAIR MONEY LOOP — found by running a real build.
+   *
+   * `foundation` and `evidence` are issued in one `Promise.all`, so both model
+   * calls are finished and billed before either yields. They then yield one
+   * after the other, and the budget check sat between them.
+   *
+   * Observed on a 14-page elite build: the pair took longer than the leg
+   * budget, so every leg broke immediately after `foundation`, discarded the
+   * already-paid-for evidence result, and the next leg bought it again. Five
+   * evidence calls, none persisted, 90.4¢ of a 92.4¢ bill, twelve minutes, zero
+   * evidence cards. The stall guard could not see it, because `foundation`
+   * completed every single time.
+   */
+  test("a stage holding a finished sibling does not end the leg", async () => {
+    const clock = { t: 0 };
+    const h = harness(clock);
+    const res = await consumeLeg(
+      {
+        async *[Symbol.asyncIterator](): AsyncIterator<StageEvent> {
+          yield { type: "stage-start", stage: "foundation" };
+          yield { type: "stage-start", stage: "evidence" };
+          clock.t += 90_000; // both calls land here — both are already paid for
+          yield {
+            type: "stage-done",
+            stage: "foundation",
+            pack: {} as never,
+            holdLeg: true,
+          };
+          yield { type: "stage-done", stage: "evidence", pack: {} as never };
+          yield { type: "stage-start", stage: "activities-1" };
+          clock.t += 10_000;
+          yield { type: "stage-done", stage: "activities-1", pack: {} as never };
+        },
+      },
+      { ...h.opts, budgetMs: 45_000 }
+    );
+
+    assert.ok(
+      h.persisted.includes("evidence"),
+      "the evidence result was paid for and must be persisted, not discarded"
+    );
+    assert.deepEqual(
+      h.persisted,
+      ["foundation", "evidence"],
+      "the leg flushes the held pair, then stops at the NEXT boundary"
+    );
+    assert.equal(res.finished, false);
+  });
+
+  test("holdLeg does not disable the budget for the stages after it", async () => {
+    const clock = { t: 0 };
+    const h = harness(clock);
+    await consumeLeg(
+      {
+        async *[Symbol.asyncIterator](): AsyncIterator<StageEvent> {
+          clock.t += 90_000;
+          yield {
+            type: "stage-done",
+            stage: "foundation",
+            pack: {} as never,
+            holdLeg: true,
+          };
+          yield { type: "stage-done", stage: "evidence", pack: {} as never };
+          clock.t += 10_000;
+          yield { type: "stage-done", stage: "teacher-guide", pack: {} as never };
+        },
+      },
+      { ...h.opts, budgetMs: 45_000 }
+    );
+    assert.deepEqual(
+      h.persisted,
+      ["foundation", "evidence"],
+      "once the held pair is flushed the budget applies again"
+    );
+  });
 });

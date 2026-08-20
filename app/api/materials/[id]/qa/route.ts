@@ -3,6 +3,8 @@ import { logActivity, updateMaterialContent } from "@/lib/db";
 import { reviewPackContent, describeAiError } from "@/lib/ai";
 import { LessonPack, lessonPackSchema, packContentHash } from "@/lib/lesson-pack-schema";
 import { loadEditableMaterial } from "@/lib/api/guards";
+import { metered } from "@/lib/api/metered";
+import { captureQaScope } from "@/lib/qa-scope";
 import { serverError } from "@/lib/api/request";
 
 export const dynamic = "force-dynamic";
@@ -22,16 +24,27 @@ export async function POST(
     packOnly: "Content QA",
   });
   if (!gate.ok) return gate.response;
-  const { material, role } = gate;
+  const { material, role, session } = gate;
+  const { scope } = session;
 
   const content = material.content as LessonPack;
   try {
-    const report = await reviewPackContent(material.subject, content);
+    const report = await metered(
+      { scope, materialId: material.id, operation: "qa" },
+      () => reviewPackContent(material.subject, content)
+    );
     const next = lessonPackSchema.parse({
       ...content,
       // stamp the report with the content fingerprint it describes, so the
       // review gate can detect when a later edit made this QA stale
-      contentQaJson: JSON.stringify({ ...report, contentHash: packContentHash(content) }),
+      contentQaJson: JSON.stringify({
+        ...report,
+        contentHash: packContentHash(content),
+        /* Per-page fingerprints, so a later edit can be reported as "pages 4
+           and 8 are unreviewed" rather than only "this report is stale" —
+           which left re-reading all thirteen as the only way to find out. */
+        scope: captureQaScope(content),
+      }),
       contentQaAt: new Date().toISOString(),
     });
     await updateMaterialContent(material.id, material.title, next);

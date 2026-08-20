@@ -1,4 +1,9 @@
 import Link from "next/link";
+import { listAiUsage } from "@/lib/db";
+import { summarizeSpend } from "@/lib/ai-spend";
+import AiSpend from "@/components/dash/AiSpend";
+import CostProjection from "@/components/dash/CostProjection";
+import { budgetMode } from "@/lib/model-policy";
 import {
   listAllSubmissions,
   listCorrections,
@@ -76,15 +81,27 @@ export default async function AnalyticsPage() {
   }
 
   const maxTag = ins.tagStats[0]?.count ?? 1;
+  /* Measured spend, from the rows the meter writes — see lib/ai-spend.ts. */
+  const spend = summarizeSpend(await listAiUsage(scope));
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-10">
+    <div className="mx-auto max-w-4xl">
       <h1 className="font-display text-4xl text-fg1">Quality Insights</h1>
       <p className="mb-8 mt-1 text-sm text-fg2">
         The measurable side of &ldquo;gets better over time&rdquo; — the review
         funnel, what gets corrected most, and which failure modes are worth
         automating.
       </p>
+
+      <div className="mb-8 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+        <AiSpend spend={spend} />
+        <CostProjection
+          usdPerLesson={spend.usdPerLesson}
+          observedLessons={spend.lessons}
+          editorShare={spend.editorShare}
+          mode={budgetMode()}
+        />
+      </div>
 
       {/* headline numbers */}
       <div className="mb-8 grid gap-3 sm:grid-cols-4">

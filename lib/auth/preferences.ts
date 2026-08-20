@@ -28,6 +28,20 @@ export const preferencesSchema = z.object({
   gradeBand: z.enum(GRADE_BANDS).catch("Grades 6–8"),
   /** Default lesson length in minutes. */
   durationMin: z.number().int().min(15).max(600).catch(120),
+  /**
+   * WHAT THIS TEACHER'S CLASSES ARE LIKE — the memory a teacher was retyping
+   * into "Add teaching detail" on every single build.
+   *
+   * Consumed twice: `QuickBuildWizard` seeds the per-lesson prior
+   * knowledge/misconceptions/constraints fields from these so a returning
+   * teacher starts from their own last answer instead of a blank box, and
+   * `planLesson()` reads them so it stops asking a clarifying question the
+   * teacher already answered once. Per-lesson fields still win — these are a
+   * starting point, never a silent override of what's typed for THIS lesson.
+   */
+  defaultPriorKnowledge: z.string().max(600).catch(""),
+  defaultMisconceptions: z.string().max(600).catch(""),
+  defaultConstraints: z.string().max(600).catch(""),
 });
 
 export type Preferences = z.infer<typeof preferencesSchema>;

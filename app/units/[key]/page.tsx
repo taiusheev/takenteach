@@ -60,7 +60,7 @@ export default async function UnitPage({
   const builtCount = rows.filter((r) => r.built).length;
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10">
+    <div className="mx-auto max-w-3xl">
       <Link href="/" className="text-sm font-bold text-fg3 hover:text-fg1 transition-colors">
         ← Library
       </Link>

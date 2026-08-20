@@ -4,6 +4,7 @@ import { logActivity, snapshotAndUpdate } from "@/lib/db";
 import { reviseLessonPack, describeAiError } from "@/lib/ai";
 import { LessonPack } from "@/lib/lesson-pack-schema";
 import { loadEditableMaterial } from "@/lib/api/guards";
+import { metered } from "@/lib/api/metered";
 import { readBody, serverError } from "@/lib/api/request";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +37,8 @@ export async function POST(
     packOnly: "Targeted revision",
   });
   if (!gate.ok) return gate.response;
-  const { material, role } = gate;
+  const { material, role, session } = gate;
+  const { scope } = session;
 
   const parsed = await readBody(req, bodySchema);
   if (!parsed.ok) return parsed.response;
@@ -44,7 +46,10 @@ export async function POST(
 
   const content = material.content as LessonPack;
   try {
-    const result = await reviseLessonPack(material.subject, content, instruction);
+    const result = await metered(
+      { scope, materialId: material.id, operation: "revise" },
+      () => reviseLessonPack(material.subject, content, instruction)
+    );
     if (!result.applied) {
       // Nothing located/changed — don't overwrite; tell the author why.
       return NextResponse.json(

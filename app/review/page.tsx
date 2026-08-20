@@ -40,7 +40,7 @@ export default async function ReviewQueuePage() {
   );
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-10">
+    <div className="mx-auto max-w-4xl">
       <h1 className="font-display text-4xl text-fg1">Review Queue</h1>
       <p className="mt-1 mb-8 text-sm text-fg2">
         Packs waiting for approval or publication.{" "}
