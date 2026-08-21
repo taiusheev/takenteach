@@ -77,7 +77,8 @@ let pack = null;
 let failed = null;
 const stages = [];
 
-const totals = await withUsageMeter(
+let totals = null;
+await withUsageMeter(
   async () => {
     const plan = await planLesson(brief);
     console.log(`\n  planned: ${plan.skillFocus} · ${plan.gradeBand} · ${plan.durationMin}min`);
@@ -118,14 +119,16 @@ const totals = await withUsageMeter(
       console.log(`\n  build threw: ${failed.slice(0, 300)}`);
     }
   },
-  async (t) => t
+  async (t) => {
+    totals = t;
+  }
 );
 
 const mins = ((Date.now() - started) / 60000).toFixed(1);
 console.log(`\n── RESULT (${mins} min) ──`);
-console.log(`  ${describeUsage(totals)}`);
+console.log(totals && totals.calls ? `  ${describeUsage(totals)}` : "  no model calls completed");
 
-const bd = JSON.parse(usageBreakdown(totals));
+const bd = totals && totals.calls ? JSON.parse(usageBreakdown(totals)) : {};
 if (bd.byTask?.length) {
   console.log("\n  stage            calls      $");
   for (const t of bd.byTask.sort((a, b) => b.usd - a.usd))

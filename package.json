@@ -15,7 +15,8 @@
     "render:check": "node --import ./scripts/test-resolver.mjs scripts/render-check.mjs",
     "dash:check": "node --import ./scripts/test-resolver.mjs scripts/dash-check.mjs",
     "open:trial": "node --env-file-if-exists=.env.local --import ./scripts/test-resolver.mjs scripts/open-trial.mjs",
-    "open:compare": "node --import ./scripts/test-resolver.mjs scripts/open-compare.mjs"
+    "open:compare": "node --import ./scripts/test-resolver.mjs scripts/open-compare.mjs",
+    "open:inspect": "node --import ./scripts/test-resolver.mjs scripts/open-inspect.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",

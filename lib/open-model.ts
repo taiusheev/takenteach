@@ -219,6 +219,27 @@ function toMessages(
 }
 
 /**
+ * How many times to wait out a rate limit before giving up on a call.
+ *
+ * Measured on Groq's free tier: 8,000 tokens per MINUTE, against a system
+ * prefix that is ~12k tokens on a grounded build. A single call can therefore
+ * exceed a whole minute's allowance, and a fourteen-call build spends most of
+ * its wall clock asleep. Retrying is still right — the limit is per minute, so
+ * waiting genuinely clears it — but no amount of retrying makes a free tier
+ * viable for this pipeline, and the trial says so rather than grinding.
+ */
+const MAX_RATE_LIMIT_WAITS = 4;
+
+/** Groq puts the exact wait in the message: "Please try again in 15.48s". */
+function retryAfterMs(detail: string, headers: Headers): number {
+  const header = headers.get("retry-after");
+  if (header && Number(header) > 0) return Number(header) * 1000;
+  const m = detail.match(/try again in ([\d.]+)s/i);
+  if (m) return Math.ceil(Number(m[1]) * 1000) + 500;
+  return 20_000;
+}
+
+/**
  * Send one request to the open provider and return it in Anthropic's shape.
  *
  * `schemaName` matters: strict mode requires a name, and the provider uses it
@@ -253,22 +274,40 @@ export async function callOpenModel(args: {
     },
   };
 
-  const res = await fetch(`${args.model.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify(body),
-  });
+  let res: Response | null = null;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(`${args.model.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) break;
 
-  if (!res.ok) {
     const detail = await res.text().catch(() => "");
+
+    /* A rate limit is not a failure, it is a wait — and the provider says how
+       long. Worth handling properly rather than aborting a build nine stages
+       in, which on a per-minute limit is a build that could have finished. */
+    if (res.status === 429 && attempt < MAX_RATE_LIMIT_WAITS) {
+      const wait = retryAfterMs(detail, res.headers);
+      console.log(
+        `  [${args.schemaName}] rate limited, waiting ${(wait / 1000).toFixed(1)}s (attempt ${attempt + 1}/${MAX_RATE_LIMIT_WAITS})`
+      );
+      await new Promise((r) => setTimeout(r, wait));
+      continue;
+    }
+
     /* Surfaced rather than swallowed. A 400 here is almost always the schema
        being rejected, and that is the single most useful thing to see when
-       porting a stage — it names the field. */
+       porting a stage — it names the field. A 429 that survives the retries is
+       a tier problem, not a transient one, and says so. */
     throw new Error(
-      `${args.model.id} refused the request (${res.status}): ${detail.slice(0, 600)}`
+      res.status === 429
+        ? `${args.model.id} is rate limited beyond what waiting fixes. This pipeline sends a large system prefix on every call, so a low tokens-per-minute tier cannot run a full build however long it waits. Detail: ${detail.slice(0, 300)}`
+        : `${args.model.id} refused the request (${res.status}): ${detail.slice(0, 600)}`
     );
   }
 
