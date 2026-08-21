@@ -1174,6 +1174,15 @@ const outlineSchema = z.object({
   coverIcon: z.string(),
   coverTagline: z.string(),
   accentColor: z.string(),
+  /**
+   * The low-load topic the new skill is practised on before the real anchor.
+   * Empty when the lesson deepens a skill students already have.
+   *
+   * Decided HERE rather than per page, because it is a fact about the whole
+   * sequence: pages mark themselves practice or anchor by pointing back at it,
+   * and a topic invented page-by-page would be a different topic each time.
+   */
+  practiceTopic: z.string(),
   activities: z.array(
     z.object({
       kind: activityKind,
@@ -1406,12 +1415,70 @@ const genActivitySchema = z.object({
       label: z.string(),
       side: z.enum(["pro", "con", "neutral"]),
       expectedAnswer: z.string(),
+      // Coaching the STUDENT reads, printed on their sheet — not the answer
+      // key. See the contract in the prompt and `promptSchema` in
+      // lib/lesson-pack-schema.ts.
+      guide: z.string(),
+      trap: z.string(),
     })
   ),
   exampleLayers: z.array(
-    z.object({ label: z.string(), text: z.string(), note: z.string() })
+    z.object({
+      label: z.string(),
+      text: z.string(),
+      note: z.string(),
+      // The observable test a student runs on their own sentence.
+      passesWhen: z.string(),
+    })
   ),
+  // Why a student should spend fourteen minutes on this page, said to them.
+  whyItMatters: z.string(),
+  // One named job per evidence card this page uses.
+  cardJobs: z.array(
+    z.object({ cardId: z.string(), job: z.string(), instruction: z.string() })
+  ),
+  // Diagrams the page teaches with. Empty on pages that teach with words.
+  figures: z.array(
+    z.object({
+      kind: z.enum(["unit-chart", "process-flow", "ratio", "balance"]),
+      title: z.string(),
+      caption: z.string(),
+      exact: z.string(),
+      source: z.string(),
+      filled: z.number().int(),
+      total: z.number().int(),
+      thenFilled: z.number().int(),
+      nowLabel: z.string(),
+      thenLabel: z.string(),
+      stages: z.array(z.object({ label: z.string(), detail: z.string() })),
+      ratioLeft: z.string(),
+      ratioRight: z.string(),
+      // Storage requires >= 1, so the idle value on a non-ratio figure is 1,
+      // not 0 — a 0 here fails to parse and takes the whole page with it.
+      ratioCount: z.number().int().min(1),
+      subject: z.string(),
+      bringsLabel: z.string(),
+      costsLabel: z.string(),
+      brings: z.array(z.string()),
+      costs: z.array(z.string()),
+    })
+  ),
+  // The peer ballot. Belongs on the exit ticket; empty everywhere else.
+  exitBallot: z.object({
+    rows: z.array(z.object({ criterion: z.string(), test: z.string() })),
+    scale: z.array(z.string()),
+    errors: z.array(z.string()),
+    // Named moves, one string each ("Add the because"). Not objects: this is
+    // the shape the pack stores and the sheet prints as pills.
+    repairs: z.array(z.string()),
+    product: z.string(),
+  }),
+  // Can this page be dropped when the room runs behind? The cut path.
+  optional: z.boolean(),
+  // Which topic this page runs on — see `practiceTopic` on the pack.
+  runsOn: z.enum(["anchor", "practice"]),
   sortItems: z.array(
+
     z.object({
       statement: z.string(),
       category: z.string(),
@@ -2353,6 +2420,8 @@ export async function* generateLessonPack(
       coverIcon: pack.coverIcon,
       coverTagline: pack.coverTagline,
       accentColor: pack.accentColor,
+      // A reused skeleton keeps whatever practice topic the pack already has.
+      practiceTopic: pack.practiceTopic ?? "",
       activities: inherited.slots.map((s) => ({
         kind: s.kind,
         title: s.title,
@@ -2371,6 +2440,8 @@ export async function* generateLessonPack(
       coverIcon: pack.coverIcon,
       coverTagline: pack.coverTagline,
       accentColor: pack.accentColor,
+      // The author reviewed this arc; whatever practice topic it carries stands.
+      practiceTopic: pack.practiceTopic ?? "",
       activities: reviewed.map((s) => ({
         kind: s.kind,
         title: s.title,
@@ -2427,6 +2498,9 @@ export async function* generateLessonPack(
         : /^#[0-9a-f]{6}$/i.test(outline.accentColor || "")
           ? outline.accentColor
           : pack.accentColor,
+    /* An author-set practice topic wins: the create screen exposes the field,
+       and a teacher who typed one meant it. Otherwise take the planner's. */
+    practiceTopic: pack.practiceTopic || outline.practiceTopic || "",
     // Persist the plan so a resumed or regenerated build reuses this exact arc.
     outlinePlan: outline.activities.map((a) => ({
       kind: a.kind,
@@ -2728,7 +2802,7 @@ DEPTH — a page is still a COMPLETE activity, not one sparse prompt; it just ca
 SAY IT OUT LOUD (\`standAndDeliver\`) BELONGS ON PAGES WHERE STUDENTS HAVE JUST PRODUCED SOMETHING — the scaffolded build, the independent build, the sparring pages, the exit ticket. That is the founder's own rule: a student who has just written something stands up and says it to a partner. On a vocabulary page, a drill, a hook or a topic briefing there is nothing to deliver yet, and printing the box there anyway is what turned it into wallpaper — a bar at the bottom of thirteen pages in a row that students stop reading by page four. **At most FOUR pages in the whole pack carry one, and every one of them is a page with student writing above it.** Leave it "" everywhere else.
 
 PAGE BUDGET — one page = ONE printed A4 sheet and it MUST fit. Overfilled pages have to be split or shrunk, which wrecks both the layout and the reading size for these students. A page has roughly **950px of usable height**. Budget against these measured costs:
-- instructions banner ~80 · scene ~30 +52/turn · callouts ~90 · steps ~26 +40 each · compare ~44 +34/row · exampleLayers ~34 +52/layer · sortItems ~34 +26 each · matchPairs ~40 +30/pair · frames ~76 each · EACH PROMPT ~175 · argumentChains ~64 +168 per side · quiz ~30 +96 each · wordBank ~66 · fastFinisher ~54 · hiddenJudgeMove ~88 · keyIdea ~92 · standAndDeliver ~76
+- instructions banner ~80 · scene ~30 +52/turn · callouts ~90 · steps ~26 +40 each · compare ~44 +34/row · exampleLayers ~34 +52/layer · sortItems ~34 +26 each · matchPairs ~40 +30/pair · frames ~76 each · EACH PROMPT ~175 · argumentChains ~64 +168 per side · quiz ~30 +96 each · wordBank ~66 · fastFinisher ~54 · hiddenJudgeMove ~88 · keyIdea ~92 · standAndDeliver ~76 · whyItMatters ~46 · cardJobs ~30 +54 each · exitBallot ~150 +26 per row · each figure ~120-210 · guide/trap ~34 per prompt · passesWhen ~15 per layer
 - the rigor mechanics: microFlow ~74 +52 per capture row · ballotLine ~150 · microCrossfire ~58 +38 per question · echoCheck ~48 +30 per test. These are REQUIRED where lib/rigor.ts says so, so budget them FIRST and cut a drill to make room — a sparring page carrying a flow grid and a crossfire box carries little else, and should not.
 - In practice: AT MOST 2 big typed blocks per page, and 1–3 prompts. Never 4+ prompts stacked on top of two drills — that is two pages' worth.
 - If a page needs more than the budget, it IS two pages: split it into two activities with distinct titles and its own job each.
@@ -2759,7 +2833,13 @@ ${
 
 `
         : ""
-    }PRODUCTION & ASSESSMENT PAGES NEED A SCAFFOLD, not a blank prompt. The independent-build, exit-ticket and sparring pages are where students PRODUCE — a bare prompt with only a write-line leaves novices staring at nothing. Give each one a visible support: a STEPS checklist of the moves to make, or FRAMES (one sentence-starter per part of what they produce), plus the prompt/write-area. A production page with prompts but zero steps/frames/exampleLayers is a FAIL — the exit ticket especially should carry a short numbered checklist (name the move, cite the card, say the why) so students self-check under the clock.
+    }THE CUT PATH — mark the one or two genuinely droppable pages with \`optional: true\`.
+
+Every real class runs behind, and with no stated cut path the coach improvises under time pressure — so the first thing cut is whatever sits at the END of the pack, which is the exit ticket, the one page that must not go. Marking the extension work inverts that: a coach at minute sixty skips the page you already decided was skippable and still lands the assessment.
+
+NEVER mark the exit ticket, the worked example, or the first independent build. Those are what the lesson exists to reach. On a pack of twelve pages or more this is required; on a short pack leave everything false.
+
+PRODUCTION & ASSESSMENT PAGES NEED A SCAFFOLD, not a blank prompt. The independent-build, exit-ticket and sparring pages are where students PRODUCE — a bare prompt with only a write-line leaves novices staring at nothing. Give each one a visible support: a STEPS checklist of the moves to make, or FRAMES (one sentence-starter per part of what they produce), plus the prompt/write-area. A production page with prompts but zero steps/frames/exampleLayers is a FAIL — the exit ticket especially should carry a short numbered checklist (name the move, cite the card, say the why) so students self-check under the clock.
 
 WRITE FOR THE FLOOR, NOT THE CEILING. The test every production page must pass: could the LEAST confident student in the room finish something on it without the teacher coming to them? Not finish it well — finish it. That is the bar, and it is deliberate: this activity's measured benefits are largest for the students who arrive furthest behind, so a page that only works for the confident student is failing the ones it could help most. The strongest student is handled by the fastFinisher line, which is where the extra challenge belongs — never by leaving the page bare and calling it rigour.
 
