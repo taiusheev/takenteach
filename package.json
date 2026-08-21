@@ -13,7 +13,9 @@
     "db:migrate": "node --env-file-if-exists=.env.local --import ./scripts/test-resolver.mjs scripts/db-migrate.mjs",
     "db:import": "node --env-file-if-exists=.env.local --import ./scripts/test-resolver.mjs scripts/db-import.mjs",
     "render:check": "node --import ./scripts/test-resolver.mjs scripts/render-check.mjs",
-    "dash:check": "node --import ./scripts/test-resolver.mjs scripts/dash-check.mjs"
+    "dash:check": "node --import ./scripts/test-resolver.mjs scripts/dash-check.mjs",
+    "open:trial": "node --env-file-if-exists=.env.local --import ./scripts/test-resolver.mjs scripts/open-trial.mjs",
+    "open:compare": "node --import ./scripts/test-resolver.mjs scripts/open-compare.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",

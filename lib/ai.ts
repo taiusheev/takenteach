@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
+import { callOpenModel, openModel, runsOpen } from "./open-model";
 import {
   ACTIVITY_KINDS,
   type Activity,
@@ -129,6 +130,43 @@ function aiStream(
     // is decided in one place. Spread last so it can't be silently overridden.
     output_config: { ...params.output_config, effort },
   };
+
+  /* ── OPEN-WEIGHT STAGES ────────────────────────────────────────────────
+     Off unless OPEN_MODEL_TASKS names this stage, so the default build is
+     byte-identical to what it was. Returns the same { finalMessage } the
+     rest of this file already depends on, and meters through the same
+     recordUsage, so an open stage shows up in the cost view beside a Claude
+     one and the two are directly comparable — which is the entire point of
+     running the experiment inside the product rather than in a script.
+
+     Checked before the coalescer because the two cannot combine: the batch
+     discount is an Anthropic feature, and silently dropping a stage out of a
+     parked round would deadlock the round waiting for it. */
+  const open = runsOpen(task) ? openModel() : null;
+  if (open) {
+    const started = Date.now();
+    const fmt = (params.output_config as { format?: unknown } | undefined)?.format;
+    return {
+      finalMessage: async () => {
+        const reply = await callOpenModel({
+          model: open,
+          jsonSchema: (fmt as { schema?: unknown } | undefined)?.schema,
+          schemaName: task.replace(/-/g, "_"),
+          system: params.system,
+          messages: params.messages,
+          maxTokens: params.max_tokens,
+        });
+        recordUsage(reply.usage as never, {
+          task,
+          model: open.id,
+          effort,
+          ms: Date.now() - started,
+          promptVersion: promptVersion(task),
+        });
+        return reply as never;
+      },
+    };
+  }
 
   // Overnight mode: park the request instead of sending it, and let the
   // coalescer submit this round as one 50%-priced batch. The generator above is

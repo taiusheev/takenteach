@@ -78,6 +78,12 @@ export const RATES: Record<string, { in: number; out: number }> = {
   // an estimate that breaks the day it ends.
   [MODELS.sonnet]: { in: 3, out: 15 },
   // Haiku is intentionally absent — see the note above MODELS.
+
+  /* OPEN-WEIGHT MODELS, so a stage running on one is priced by the same
+     meter and lands in the same cost view — which is what makes the two
+     directly comparable. Published Groq rates; see lib/open-model.ts. */
+  "openai/gpt-oss-120b": { in: 0.15, out: 0.6 },
+  "openai/gpt-oss-20b": { in: 0.1, out: 0.5 },
 };
 
 export interface TaskPolicy {
