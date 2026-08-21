@@ -72,10 +72,92 @@ export interface RoundRecord {
   averageSpeaks: number | null;
 }
 
+/**
+ * A LEVEL A STUDENT HAS REACHED, not just a rating that went up.
+ *
+ * ── WHY THIS IS NOT THE SAME AS `moved` ──────────────────────────────────
+ * A move from "Not yet" to "Emerging" is progress and belongs in the report.
+ * It is not news. Crossing into "Solid" is: it changes what the student can be
+ * ASKED to do — paired as the stronger partner, given the harder side, left to
+ * work unsupervised — and that is a decision a coach makes, not a number they
+ * watch. So the thresholds are the two ratings that mean something
+ * operational, and everything below them stays in `moved`.
+ *
+ * ── AND WHY THERE IS NO NOTIFICATION ─────────────────────────────────────
+ * The request behind this asked to be notified. There is no notification
+ * system anywhere in the product — Settings deliberately omits the section
+ * because nothing reads it — and inventing an email pipeline so one feature
+ * can use it would be a large build whose first user is a sentence. So a
+ * milestone is surfaced where a coach already looks: their student's page, and
+ * the weekly summary on the dashboard. If that proves too quiet in practice,
+ * the data is already here and a notifier is a small addition on top; the
+ * reverse — a pipeline with nothing true to send — is not recoverable.
+ */
+export interface Milestone {
+  skill: SkillId;
+  label: string;
+  /** the rating they crossed INTO: 4 "Solid", 5 "Teaching others" */
+  level: number;
+  levelLabel: string;
+  /** where they were before this period, for the sentence a coach reads */
+  fromLabel: string;
+  on: string;
+}
+
+/** The two ratings that change what a student can be asked to do. */
+const LEVELS = [5, 4] as const;
+
+/**
+ * Levels crossed during the period.
+ *
+ * Shared by `studentReport` and the weekly digest so one definition of "a
+ * student levelled up" serves both — two implementations would drift, and the
+ * dashboard congratulating a student the student's own page does not is worse
+ * than either surface alone.
+ *
+ * A crossing needs a BEFORE. A student whose very first observation is a 4 has
+ * not levelled up; nobody knows where they were, and announcing it as an
+ * achievement on day one is how a coach learns to distrust the feature.
+ */
+export function milestonesFor(
+  observations: Observation[],
+  from: string,
+  to: string
+): Milestone[] {
+  const all = chronological(observations);
+  const out: Milestone[] = [];
+  for (const s of SKILLS) {
+    const mine = all.filter((o) => o.skill === s.id);
+    const priors = mine.filter((o) => o.observed_on < from);
+    if (priors.length === 0) continue; // no baseline — see the note above
+    const inWindow = mine.filter(
+      (o) => o.observed_on >= from && o.observed_on <= to
+    );
+    if (inWindow.length === 0) continue;
+
+    const before = priors[priors.length - 1].rating;
+    const latest = inWindow[inWindow.length - 1];
+    // Highest threshold first, so reaching 5 reports as 5 rather than as 4.
+    const crossed = LEVELS.find((t) => before < t && latest.rating >= t);
+    if (crossed === undefined) continue;
+    out.push({
+      skill: s.id,
+      label: s.label,
+      level: crossed,
+      levelLabel: ratingLabel(crossed),
+      fromLabel: ratingLabel(before),
+      on: latest.observed_on,
+    });
+  }
+  return out.sort((a, b) => b.level - a.level);
+}
+
 export interface StudentReport {
   from: string;
   to: string;
   observationCount: number;
+  /** levels reached in this period — see milestonesFor */
+  milestones: Milestone[];
   /** skills that changed in this period, biggest gain first */
   moved: SkillMovement[];
   /** skills seen repeatedly at the same rating and not yet solid */
@@ -200,6 +282,7 @@ export function studentReport(args: {
     from,
     to,
     observationCount: inWindow.length,
+    milestones: milestonesFor(args.observations, from, to),
     moved,
     stuck,
     newlySeen,

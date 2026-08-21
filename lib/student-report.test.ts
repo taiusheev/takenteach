@@ -207,3 +207,60 @@ test("a round alone is enough to have something to report", () => {
   assert.equal(r.hasData, true);
   assert.match(r.headline, /1 of 1 round won/);
 });
+
+// ── levels reached ───────────────────────────────────────────────────────────
+// The one thing on a student's page that gets read out loud to the student, so
+// a false positive is not a cosmetic bug — it is a promise the coach has to
+// walk back.
+
+test("crossing into Solid is a milestone", () => {
+  const r = report([o("rebuttal", 3, "2026-07-10"), o("rebuttal", 4, "2026-08-12")]);
+  assert.equal(r.milestones.length, 1);
+  assert.equal(r.milestones[0].level, 4);
+  assert.equal(r.milestones[0].levelLabel, "Solid");
+  assert.equal(r.milestones[0].fromLabel, "Doing it");
+});
+
+test("progress that does not cross a level is movement, not a milestone", () => {
+  // 1 → 3 is real progress and belongs in `moved`. It changes nothing about
+  // what the student can be ASKED to do, which is what a level means here.
+  const r = report([o("rebuttal", 1, "2026-07-10"), o("rebuttal", 3, "2026-08-12")]);
+  assert.equal(r.moved.length, 1);
+  assert.equal(r.milestones.length, 0);
+});
+
+test("a first-ever observation at Solid is NOT a milestone", () => {
+  /* Nobody knows where they were, so nothing was crossed. Announcing this as
+     an achievement on the day a student is added is exactly how a coach learns
+     to distrust the feature. */
+  const r = report([o("evidence", 4, "2026-08-12")]);
+  assert.equal(r.milestones.length, 0);
+  assert.equal(r.newlySeen.length, 1);
+});
+
+test("reaching Teaching others reports as 5, not as 4", () => {
+  // Both thresholds are crossed; the higher one is the news.
+  const r = report([o("logic", 2, "2026-07-01"), o("logic", 5, "2026-08-20")]);
+  assert.equal(r.milestones.length, 1);
+  assert.equal(r.milestones[0].level, 5);
+});
+
+test("already Solid and still Solid is not a new milestone", () => {
+  const r = report([o("logic", 4, "2026-07-01"), o("logic", 4, "2026-08-20")]);
+  assert.equal(r.milestones.length, 0);
+});
+
+test("dropping back below Solid does not report as reaching it", () => {
+  // The last observation in the window is what counts, not the best one.
+  const r = report([
+    o("logic", 3, "2026-07-01"),
+    o("logic", 4, "2026-08-05"),
+    o("logic", 2, "2026-08-20"),
+  ]);
+  assert.equal(r.milestones.length, 0);
+});
+
+test("a crossing that happened before the period is not this period's news", () => {
+  const r = report([o("logic", 2, "2026-06-01"), o("logic", 4, "2026-06-20")]);
+  assert.equal(r.milestones.length, 0);
+});

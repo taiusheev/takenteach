@@ -24,7 +24,7 @@ import type { WeeklyDigest } from "@/lib/weekly-digest";
  * click — not because anyone owes anyone an explanation.
  */
 export default function ThisWeek({ digest }: { digest: WeeklyDigest }) {
-  const { taught, pacing, unused, skipped } = digest;
+  const { taught, pacing, unused, skipped, milestones } = digest;
 
   /* The finding worth leading with: a page cut more than once that the pack
      itself called core. The author decided it was essential and the room
@@ -37,6 +37,7 @@ export default function ThisWeek({ digest }: { digest: WeeklyDigest }) {
     taught.length === 0 &&
     unused.length === 0 &&
     !pacing.note &&
+    milestones.length === 0 &&
     wrongAboutItself.length === 0;
   if (nothingToSay) return null;
 
@@ -55,6 +56,32 @@ export default function ThisWeek({ digest }: { digest: WeeklyDigest }) {
       </div>
 
       <div className="flex flex-col gap-2.5">
+        {/* Students first, and this is a judgement about what a dashboard is
+            for: everything else here is about the WORK, and this is the only
+            line about whether it landed on anyone. It also carries the request
+            behind the feature — "notify me when a student reaches a level" —
+            without a notification system, by putting it where the coach
+            already looks on a Monday. */}
+        {milestones.length > 0 && (
+          <div className="rounded-xl border border-ok/40 bg-ok/8 px-4 py-3">
+            <ul className="flex flex-col gap-1">
+              {milestones.map((m) => (
+                <li key={`${m.studentId}-${m.skillLabel}`} className="text-[12.5px] text-fg1">
+                  <Link
+                    href={`/students/${m.studentId}`}
+                    className="font-semibold hover:underline"
+                  >
+                    {m.studentName}
+                  </Link>{" "}
+                  reached <strong className="font-semibold">{m.levelLabel}</strong> on{" "}
+                  {m.skillLabel}
+                  <span className="text-fg3"> — up from {m.fromLabel}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* The packs are the wrong length for this room. The only feedback
             loop there is on whether generated durations survive contact. */}
         {pacing.note && (

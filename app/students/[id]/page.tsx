@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { requireActiveSession } from "@/lib/auth/dal";
 import { notFound } from "next/navigation";
-import { getStudent, listObservations } from "@/lib/db";
+import {
+  getStudent,
+  listAllSubmissions,
+  listObservations,
+  listRounds,
+} from "@/lib/db";
 import {
   RATINGS,
   ratingLabel,
@@ -9,6 +14,9 @@ import {
   skillStates,
 } from "@/lib/students";
 import ObservationLogger from "@/components/ObservationLogger";
+import RecentProgress from "@/components/students/RecentProgress";
+import { studentReport } from "@/lib/student-report";
+import { daysAgo } from "@/lib/weekly-digest";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +39,21 @@ export default async function StudentPage({
   const next = recommendations(states);
   const seen = states.filter((s) => s.count > 0);
 
+  /* The recent period, with the evidence attached. The observation read above
+     is the WHOLE log on purpose — the report measures movement against what
+     was believed before the window, so filtering it would make every skill
+     look newly observed. See lib/student-report.ts. */
+  const REPORT_DAYS = 30;
+  const today = new Date().toISOString().slice(0, 10);
+  const report = studentReport({
+    from: daysAgo(today, REPORT_DAYS),
+    to: today,
+    observations,
+    studentId: student.id,
+    rounds: await listRounds(scope),
+    submissions: await listAllSubmissions(scope),
+  });
+
   return (
     <div className="mx-auto max-w-5xl">
       <Link href="/students" className="text-sm font-bold text-fg3 hover:text-fg1">
@@ -48,6 +71,8 @@ export default async function StudentPage({
           </p>
         </div>
       </div>
+
+      <RecentProgress report={report} days={REPORT_DAYS} />
 
       {/* ── Where they are ── */}
       <section className="mb-6 rounded-xl border border-inkline bg-inkcard p-4">

@@ -1,6 +1,7 @@
 // type-only: this module stays pure aggregation and must not pull in the DB layer
 import type { MaterialRow, ObservationRow, StudentRow, TaughtRow } from "./db";
 import type { LessonPack } from "./lesson-pack-schema";
+import { milestonesFor } from "./student-report";
 
 /**
  * "WHAT DID I GET THROUGH, AND WHAT DIDN'T I?"
@@ -70,10 +71,21 @@ export interface SkippedPage {
   wasMarkedOptional: boolean;
 }
 
+/** A student who reached a new level this week — see lib/student-report.ts. */
+export interface StudentMilestone {
+  studentId: number;
+  studentName: string;
+  skillLabel: string;
+  levelLabel: string;
+  fromLabel: string;
+}
+
 export interface WeeklyDigest {
   from: string;
   to: string;
   taught: TaughtEntry[];
+  /** levels students crossed this week, best first */
+  milestones: StudentMilestone[];
   pacing: PacingVerdict;
   /** built, ready, and still never put in front of a class */
   unused: UnusedLesson[];
@@ -246,16 +258,38 @@ export function weeklyDigest(args: {
   const unused = unusedLessons(args.materials, args.taught, to);
   const skipped = skippedPages(inWindow, byId);
 
+  /* Levels crossed this week, across the roster. Computed with the SAME
+     function the student's own page uses, so the dashboard can never
+     congratulate a student their page does not — two implementations of "they
+     levelled up" would drift, and the disagreement would be invisible. */
+  const milestones: StudentMilestone[] = [];
+  for (const s of args.students) {
+    if (s.archived) continue;
+    const mine = args.observations.filter((o) => o.student_id === s.id);
+    if (mine.length === 0) continue;
+    for (const m of milestonesFor(mine, from, to)) {
+      milestones.push({
+        studentId: s.id,
+        studentName: s.name,
+        skillLabel: m.label,
+        levelLabel: m.levelLabel,
+        fromLabel: m.fromLabel,
+      });
+    }
+  }
+
   /* `hasData` is about the WEEK, not the library. A teacher with a full
      library and a quiet week should get "nothing logged" rather than a report
      assembled out of older rows — a digest that pads itself is one nobody
      trusts the week it matters. */
-  const hasData = taught.length > 0 || unused.length > 0;
+  const hasData =
+    taught.length > 0 || unused.length > 0 || milestones.length > 0;
 
   return {
     from,
     to,
     taught,
+    milestones,
     pacing,
     unused,
     skipped,

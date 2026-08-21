@@ -159,6 +159,101 @@ console.log("\nfinished lessons still waiting");
   ]);
 }
 
+/* ── a student reaching a level ────────────────────────────────────────────
+   The request behind this asked for a notification. There is none, so this
+   line IS the delivery — if it does not render, the feature does not exist. */
+console.log("\na student crossed into Solid");
+{
+  const obs = (rating, on) => ({
+    id: ++seq, student_id: 5, skill: "rebuttal", rating,
+    note: "", context: "", observed_on: on, role: "teacher",
+  });
+  const html = render({
+    students: [{ id: 5, name: "Amina R.", cohort: "Novice", archived: 0 }],
+    observations: [obs(3, "2026-07-10"), obs(4, "2026-08-18")],
+  });
+  failed += checkHtml(html, [
+    ["the student is named", "Amina R."],
+    ["and linked", '/students/5"'],
+    ["the level reached", "Solid"],
+    ["and where they came from", "up from Doing it"],
+  ]);
+}
+
+/* ── the same student, no baseline ─────────────────────────────────────────
+   A first-ever observation at Solid crossed nothing. Announcing it would be a
+   promise the coach has to walk back to the student. */
+console.log("\nfirst-ever observation at Solid — nothing was crossed");
+{
+  const html = render({
+    students: [{ id: 5, name: "Amina R.", cohort: "Novice", archived: 0 }],
+    observations: [
+      { id: ++seq, student_id: 5, skill: "rebuttal", rating: 4,
+        note: "", context: "", observed_on: "2026-08-18", role: "teacher" },
+    ],
+  });
+  const ok = html === "";
+  failed += ok ? 0 : 1;
+  console.log(`  ${ok ? "ok  " : "FAIL"}  nothing is announced`);
+}
+
+/* ── the student's own page ────────────────────────────────────────────────
+   Same milestone, different surface. These have to agree: a dashboard that
+   congratulates a student whose own page says nothing is worse than either
+   alone, and the shared `milestonesFor` is what guarantees it — this is the
+   test that would catch someone re-implementing it. */
+const RecentProgress = (await import("../components/students/RecentProgress.tsx")).default;
+const { studentReport } = await import("../lib/student-report.ts");
+
+console.log("\nthe student's own page shows the same milestone");
+{
+  const obs = (rating, on, note = "") => ({
+    id: ++seq, student_id: 5, skill: "rebuttal", rating,
+    note, context: "", observed_on: on, role: "teacher",
+  });
+  const html = renderToStaticMarkup(
+    React.createElement(RecentProgress, {
+      days: 30,
+      report: studentReport({
+        from: "2026-07-21",
+        to: TODAY,
+        studentId: 5,
+        rounds: [],
+        submissions: [],
+        observations: [
+          obs(3, "2026-07-10"),
+          obs(4, "2026-08-18", "Restated their best argument before answering it."),
+        ],
+      }),
+    })
+  );
+  failed += checkHtml(html, [
+    ["the level reached", "Solid"],
+    ["where they came from", "up from Doing it"],
+    ["the coach's own words, verbatim", "Restated their best argument before answering it."],
+    ["and the period is named", "Last 30 days"],
+  ]);
+}
+
+console.log("\nthe student's page on a quiet period");
+{
+  const html = renderToStaticMarkup(
+    React.createElement(RecentProgress, {
+      days: 30,
+      report: studentReport({
+        from: "2026-07-21", to: TODAY, studentId: 5, rounds: [], submissions: [],
+        observations: [],
+      }),
+    })
+  );
+  failed += checkHtml(html, [
+    /* Unlike the dashboard, this one still renders — a student's page with a
+       silent gap where the period should be reads as broken, and the coach
+       came here specifically to look at this person. */
+    ["it says so rather than vanishing", "Nothing logged in this period"],
+  ]);
+}
+
 cleanupShim();
 console.log(
   failed === 0 ? "\nThe week renders, and knows when to stay quiet.\n" : `\n${failed} check(s) failed.\n`
