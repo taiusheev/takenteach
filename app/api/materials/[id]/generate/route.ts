@@ -224,7 +224,8 @@ export async function POST(
                   inherit: inputs.design.inherit,
                 },
                 inputs.recentActivity,
-                inputs.teachingFeedback
+                inputs.teachingFeedback,
+                inputs.styleProfile
               )
             : generateSimpleContent(
                 material.type,

@@ -8,6 +8,8 @@ import { ThemeToggle } from "@/components/shell/Theme";
 import { GRADE_BANDS } from "@/lib/lesson-quality";
 import { SUBJECT_DEFS, SUBJECTS, type Subject } from "@/lib/subjects";
 import type { Preferences } from "@/lib/auth/preferences";
+import type { StyleProfile } from "@/lib/style-profile";
+import StyleProfilePanel from "@/components/settings/StyleProfilePanel";
 
 /**
  * Settings.
@@ -36,11 +38,13 @@ export default function SettingsForm({
   email,
   orgName,
   preferences: initialPrefs,
+  styleProfile,
 }: {
   name: string;
   email: string;
   orgName: string;
   preferences: Preferences;
+  styleProfile: StyleProfile;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -259,6 +263,12 @@ export default function SettingsForm({
           </label>
         </div>
       </section>
+
+      {/* Its own island: it saves itself, on its own endpoint, because one
+          of its actions costs a model call and the rest of this form does
+          not. Sharing the page's Save would mean a name change spending
+          money. */}
+      <StyleProfilePanel initial={styleProfile} />
 
       {/* ── Appearance ── */}
       <section className="card mb-4 flex items-center justify-between gap-4 p-5">

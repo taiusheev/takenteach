@@ -408,6 +408,15 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user        ON sessions (user_id);
 -- what the note at the top of the identity section warns about.)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences text NOT NULL DEFAULT '{}';
 
+-- What this teacher's own materials sound like, extracted from samples they
+-- pasted and then edited by hand. Per USER for the same reason preferences is:
+-- two coaches in one school do not write alike, and a shared profile would
+-- make every pack sound like whichever of them last saved.
+--
+-- JSON text, read through a zod schema that applies defaults, so a field added
+-- later needs no migration and no backfill. See lib/style-profile.ts.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS style_profile text NOT NULL DEFAULT '{}';
+
 -- ai_usage.material_id was declared REFERENCES materials(id) with no ON DELETE
 -- clause, which is NO ACTION: the foreign key REFUSES the delete rather than
 -- doing anything about it. Since every built lesson has usage rows, deleting

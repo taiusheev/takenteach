@@ -52,6 +52,8 @@ export interface UserRow {
   last_login_at: string | null;
   /** JSON — this teacher's own defaults. See lib/auth/preferences.ts. */
   preferences: string;
+  /** JSON — how this teacher's own materials read. See lib/style-profile.ts. */
+  style_profile: string;
 }
 
 export interface MembershipRow {
@@ -243,6 +245,24 @@ export async function updateAccount(
   await run("UPDATE users SET name = ?, preferences = ? WHERE id = ?", [
     input.name.trim(),
     input.preferences,
+    userId,
+  ]);
+}
+
+/**
+ * Save this teacher's style profile.
+ *
+ * Separate from updateAccount rather than another field on it: that endpoint
+ * is the settings form and posts the whole shape every time, so folding this
+ * in would mean a form save with no profile in its body silently erased one
+ * that had cost a model call to produce.
+ */
+export async function updateStyleProfile(
+  userId: number,
+  styleProfile: string
+): Promise<void> {
+  await run("UPDATE users SET style_profile = ? WHERE id = ?", [
+    styleProfile,
     userId,
   ]);
 }

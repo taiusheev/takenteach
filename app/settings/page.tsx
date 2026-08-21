@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { requireActiveSession } from "@/lib/auth/dal";
 import { getUser } from "@/lib/auth/store";
 import { parsePreferences } from "@/lib/auth/preferences";
+import { parseStyleProfile } from "@/lib/style-profile";
 import SettingsForm from "./SettingsForm";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +26,7 @@ export default async function SettingsPage() {
       email={session.email}
       orgName={session.orgName}
       preferences={parsePreferences(user?.preferences)}
+      styleProfile={parseStyleProfile(user?.style_profile)}
     />
   );
 }

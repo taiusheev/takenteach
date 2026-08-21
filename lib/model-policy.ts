@@ -34,6 +34,7 @@ export type Effort = "low" | "medium" | "high";
 /** Every distinct model call the product makes. */
 export type AiTask =
   | "plan" // one sentence → the pack's setup fields
+  | "style-profile" // a teacher's own materials → how they sound
   | "outline" // page-by-page arc
   | "foundation" // mission, criteria, vocabulary
   | "evidence" // the source deck — citations live or die here
@@ -152,6 +153,7 @@ const STAGED_EFFORT: Record<BudgetMode, Effort> = {
  */
 const MAX: Record<AiTask, TaskPolicy> = {
   plan: { model: MODELS.opus, effort: "low" },
+  "style-profile": { model: MODELS.opus, effort: "low" },
   outline: { model: MODELS.opus, effort: "medium" },
   foundation: { model: MODELS.opus, effort: "high" },
   evidence: { model: MODELS.opus, effort: "high" },
@@ -176,6 +178,8 @@ const BALANCED: Record<AiTask, TaskPolicy> = {
   ...MAX,
   // Filling eight known fields from one sentence, against a fixed schema.
   plan: { model: MODELS.sonnet, effort: "low" },
+  // Summarising prose into eight short fields, read back and edited by a human.
+  "style-profile": { model: MODELS.sonnet, effort: "low" },
   // Structural planning, and the author reviews it before the build spends on it.
   outline: { model: MODELS.sonnet, effort: "medium" },
   foundation: { model: MODELS.sonnet, effort: "high" },
@@ -326,6 +330,7 @@ export function costOf(
  */
 export const PROMPT_VERSIONS: Record<AiTask, string> = {
   plan: "plan_v2",
+  "style-profile": "style_profile_v1",
   outline: "outline_v2",
   foundation: "foundation_v2",
   evidence: "evidence_v2",
@@ -364,6 +369,7 @@ export function promptVersion(task: AiTask): string {
  */
 export const MAX_OUTPUT: Record<AiTask, number> = {
   plan: 4_000,
+  "style-profile": 4_000,
   outline: 12_000,
   foundation: 16_000,
   evidence: 24_000,

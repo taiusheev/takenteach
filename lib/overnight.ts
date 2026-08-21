@@ -43,6 +43,8 @@ import { avoidDigest, priorDesigns } from "./design-memory";
 import { unitDesign } from "./unit-identity";
 import { recurringCorrectionGuidance, recentActivityGuidance } from "./analytics";
 import { teachingFeedbackForPrompt } from "./weekly-digest";
+import { getUser } from "./auth/store";
+import { parseStyleProfile, styleProfileForPrompt } from "./style-profile";
 import { computeTeachingSignal, signalForPrompt } from "./teaching-signal";
 import { squadSignal, squadSignalForPrompt } from "./squad-signal";
 import { type LessonPack } from "./lesson-pack-schema";
@@ -142,6 +144,14 @@ export async function buildInputs(scope: Scope, material: MaterialRow) {
     teachingFeedback: teachingFeedbackForPrompt(
       await listTaught(scope, { limit: 40 }),
       new Date().toISOString().slice(0, 10)
+    ),
+    /* How this teacher's own materials read, if they have given us any.
+       Per USER rather than per organization, so two coaches sharing a
+       library do not write in each other's voice. See lib/style-profile.ts
+       for why only the description reaches the prompt and the `gaps` never
+       do. */
+    styleProfile: styleProfileForPrompt(
+      parseStyleProfile((await getUser(scope.userId))?.style_profile)
     ),
     design: {
       avoid: avoidDigest(await priorDesigns(scope, material.id)),
@@ -248,7 +258,8 @@ export async function runOvernight(
               inherit: inputs.design.inherit,
             },
             inputs.recentActivity,
-            inputs.teachingFeedback
+            inputs.teachingFeedback,
+            inputs.styleProfile
           );
           for await (const event of gen) {
             // Persist per stage, exactly like the live build: an overnight run
