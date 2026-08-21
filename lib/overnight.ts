@@ -29,6 +29,7 @@ import {
   listMaterials,
   listOwnRecentLessonPacks,
   listRounds,
+  listTaught,
   listSeriesSiblings,
   listStudents,
   logActivity,
@@ -41,6 +42,7 @@ import { describeAiError, generateLessonPack } from "./ai";
 import { avoidDigest, priorDesigns } from "./design-memory";
 import { unitDesign } from "./unit-identity";
 import { recurringCorrectionGuidance, recentActivityGuidance } from "./analytics";
+import { teachingFeedbackForPrompt } from "./weekly-digest";
 import { computeTeachingSignal, signalForPrompt } from "./teaching-signal";
 import { squadSignal, squadSignalForPrompt } from "./squad-signal";
 import { type LessonPack } from "./lesson-pack-schema";
@@ -133,6 +135,13 @@ export async function buildInputs(scope: Scope, material: MaterialRow) {
     ),
     recentActivity: recentActivityGuidance(
       await listOwnRecentLessonPacks(scope, material.id)
+    ),
+    /* Closes the loop the teaching log opened: what actually happened when
+       this teacher last stood in front of a class, fed back into planning the
+       next one. See teachingFeedbackForPrompt. */
+    teachingFeedback: teachingFeedbackForPrompt(
+      await listTaught(scope, { limit: 40 }),
+      new Date().toISOString().slice(0, 10)
     ),
     design: {
       avoid: avoidDigest(await priorDesigns(scope, material.id)),
@@ -238,7 +247,8 @@ export async function runOvernight(
               avoid: inputs.design.avoid,
               inherit: inputs.design.inherit,
             },
-            inputs.recentActivity
+            inputs.recentActivity,
+            inputs.teachingFeedback
           );
           for await (const event of gen) {
             // Persist per stage, exactly like the live build: an overnight run

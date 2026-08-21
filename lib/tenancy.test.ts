@@ -220,6 +220,86 @@ describe("tenant isolation", () => {
     );
   });
 
+  test("a teaching record belongs to one teacher, not to the school", async () => {
+    /* A digest is one person's week. Every other content query is scoped to
+       the ORGANIZATION, so the natural mistake here is to follow that pattern
+       and blend two coaches who share a library into a report describing
+       nobody's week. This is the test that keeps `listTaught` scoped to the
+       user as well. */
+    await db.logTaught(a.scope, {
+      materialId: a.materialId,
+      lessonTitle: "Alpha lesson",
+      cohort: "Novice",
+      taughtOn: "2026-08-18",
+      pacing: "behind",
+      rating: 4,
+      note: "",
+      skipped: [],
+    });
+
+    assert.equal((await db.listTaught(a.scope)).length, 1);
+    // A colleague in the SAME organization must not inherit it.
+    const colleague = { ...a.scope, userId: a.userId + 999 };
+    assert.equal((await db.listTaught(colleague)).length, 0);
+    assert.equal((await db.listTaught(b.scope)).length, 0);
+  });
+
+  test("a teaching record cannot be attached to another organization's lesson", async () => {
+    // The material id arrives with the request, so it is re-checked against
+    // the organization rather than trusted — and a mismatch must write
+    // nothing at all rather than an unlinked row that shows up as a phantom
+    // entry in somebody's week.
+    await assert.rejects(() =>
+      db.logTaught(a.scope, {
+        materialId: b.materialId,
+        lessonTitle: "stolen",
+        cohort: "",
+        taughtOn: "2026-08-18",
+        pacing: "",
+        rating: 0,
+        note: "",
+        skipped: [],
+      })
+    );
+    assert.equal((await db.listTaught(a.scope)).length, 1, "nothing was written");
+  });
+
+  test("deleting a lesson that cost money succeeds, and the record survives it", async () => {
+    /* ai_usage.material_id was declared with no ON DELETE clause, which is NO
+       ACTION — the foreign key REFUSED the delete. Every built lesson has
+       usage rows, so this broke Delete for every real lesson in the library,
+       and nothing caught it because no test ever deleted a material that had
+       been billed. Both facts matter: that the delete now works, and that
+       neither the spend nor the teaching record goes with it. */
+    const doomed = await db.createMaterial(
+      a.scope, "Doomed lesson", a.kitId, { title: "Doomed" } as never, "founder", "debate"
+    );
+    await db.logAiUsage({
+      orgId: a.orgId, materialId: doomed, operation: "build",
+      calls: 12, inputTokens: 1, cacheWriteTokens: 0, cacheReadTokens: 0,
+      outputTokens: 1, usd: 5, ms: 1, budgetMode: "economy", ok: true, breakdown: "{}",
+    });
+    await db.logTaught(a.scope, {
+      materialId: doomed, lessonTitle: "Doomed lesson", cohort: "",
+      taughtOn: "2026-08-19", pacing: "on", rating: 3, note: "", skipped: [],
+    });
+
+    await db.deleteMaterial(a.scope, doomed);
+    assert.equal(await db.getMaterial(a.scope, doomed), null);
+
+    const spend = await all<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM ai_usage WHERE org_id = $1 AND material_id IS NULL",
+      [a.orgId]
+    );
+    assert.equal(Number(spend[0].n), 1, "the cost history went with the lesson");
+
+    const orphaned = (await db.listTaught(a.scope)).find(
+      (t) => t.lesson_title === "Doomed lesson"
+    );
+    assert.ok(orphaned, "the record that it was taught went with the lesson");
+    assert.equal(orphaned!.material_id, null);
+  });
+
   test("every content table refuses to hold an unowned row", async () => {
     /* This used to be the substitute for a constraint SQLite could not express:
        ALTER TABLE could add NOT NULL or a REFERENCES clause but not both, so
@@ -228,7 +308,7 @@ describe("tenant isolation", () => {
        lib/schema.test.ts), so what is worth checking HERE is the other half —
        that after a suite's worth of ordinary writes, nothing has landed
        unowned. */
-    for (const table of ["materials", "style_kits", "students", "rounds"]) {
+    for (const table of ["materials", "style_kits", "students", "rounds", "teaching_log"]) {
       const rows = await all<{ n: number }>(
         `SELECT COUNT(*) AS n FROM ${table} WHERE org_id IS NULL`
       );

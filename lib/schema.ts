@@ -247,7 +247,12 @@ CREATE TABLE IF NOT EXISTS ballot_submissions (
 CREATE TABLE IF NOT EXISTS ai_usage (
   id ${ID},
   org_id bigint NOT NULL REFERENCES organizations(id),
-  material_id bigint REFERENCES materials(id),
+  -- SET NULL, not CASCADE and not the default NO ACTION. What a lesson cost is
+  -- the ground truth the whole spend policy rests on, so deleting the lesson
+  -- must not erase the money; but NO ACTION (what this was) made the foreign
+  -- key REFUSE the delete, and since every built lesson has usage rows, that
+  -- broke the Delete button for every real lesson in the library.
+  material_id bigint REFERENCES materials(id) ON DELETE SET NULL,
   -- what the user was doing: 'build', 'section', 'qa', 'revise', 'design'…
   operation text NOT NULL,
   calls integer NOT NULL DEFAULT 0,
@@ -293,6 +298,51 @@ CREATE TABLE IF NOT EXISTS observations (
   created_at text NOT NULL DEFAULT ${NOW}
 );
 
+-- WHETHER A LESSON WAS EVER ACTUALLY TAUGHT.
+--
+-- The fact the platform was missing. Everything here knew when a lesson was
+-- BUILT (activity_log, materials.updated_at), when a round was HELD, and when
+-- a student was OBSERVED — and nothing anywhere recorded that a pack was put
+-- in front of a class. So "what did I get through this week, and what is
+-- sitting unused" was unanswerable from the data, and a library full of built
+-- packs looked identical whether every one had been taught or none had.
+--
+-- The reflection is deliberately two taps and an optional sentence. A coach
+-- will not fill in a form after every session — the same constraint that
+-- shaped the observation model in lib/students.ts — so this asks for what
+-- cannot be derived and nothing else.
+--
+-- A root table despite the material_id, for the same reason corrections is
+-- one: "I taught this on Tuesday and ran out of time" is a fact about the
+-- teacher's week that outlives the pack. Deleting the pack must not silently
+-- rewrite last week's history, so the material link is SET NULL, the title is
+-- snapshotted at write time, and the row holds its own org_id rather than
+-- reaching one by joining.
+CREATE TABLE IF NOT EXISTS teaching_log (
+  id ${ID},
+  org_id bigint NOT NULL REFERENCES organizations(id),
+  material_id bigint REFERENCES materials(id) ON DELETE SET NULL,
+  -- Per TEACHER, not per organization. Two coaches teaching the same pack to
+  -- different classes is the normal case, not a conflict, and a digest that
+  -- blended them would describe nobody's week.
+  taught_by bigint REFERENCES users(id) ON DELETE SET NULL,
+  -- Snapshotted, because the material link above may become NULL.
+  lesson_title text NOT NULL DEFAULT '',
+  cohort text NOT NULL DEFAULT '',
+  taught_on text NOT NULL DEFAULT ${TODAY},
+  -- 'behind' | 'on' | 'ahead'. One tap, and the only ground truth there is for
+  -- whether the generator's duration estimates match a real room.
+  pacing text NOT NULL DEFAULT '',
+  -- 1-5, same scale as an observation so a coach reads one vocabulary.
+  rating integer NOT NULL DEFAULT 0,
+  note text NOT NULL DEFAULT '',
+  -- Page titles the coach actually skipped, as a JSON array. This is what
+  -- tells us whether the pack's own declared cut path (activity.optional)
+  -- matched what a room under time pressure really dropped.
+  skipped text NOT NULL DEFAULT '[]',
+  created_at text NOT NULL DEFAULT ${NOW}
+);
+
 -- A root table despite the material_id: a correction outlives the pack it was
 -- written about (SET NULL below), so it cannot reach an organization by joining
 -- and holds its own org_id.
@@ -319,6 +369,9 @@ CREATE INDEX IF NOT EXISTS idx_kits_org             ON style_kits (org_id, is_de
 CREATE INDEX IF NOT EXISTS idx_students_org         ON students (org_id, cohort, name);
 CREATE INDEX IF NOT EXISTS idx_rounds_org           ON rounds (org_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_corrections_org      ON corrections (org_id, id DESC);
+-- The digest asks "what did THIS teacher teach in THIS window", in that order.
+CREATE INDEX IF NOT EXISTS idx_taught_org           ON teaching_log (org_id, taught_by, taught_on DESC);
+CREATE INDEX IF NOT EXISTS idx_taught_material      ON teaching_log (material_id);
 CREATE INDEX IF NOT EXISTS idx_departments_org      ON departments (org_id, name);
 
 CREATE INDEX IF NOT EXISTS idx_activity_material    ON activity_log (material_id, id DESC);
@@ -354,6 +407,20 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user        ON sessions (user_id);
 -- and a single stray backtick ends the string mid-comment, which is exactly
 -- what the note at the top of the identity section warns about.)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences text NOT NULL DEFAULT '{}';
+
+-- ai_usage.material_id was declared REFERENCES materials(id) with no ON DELETE
+-- clause, which is NO ACTION: the foreign key REFUSES the delete rather than
+-- doing anything about it. Since every built lesson has usage rows, deleting
+-- any real lesson failed. The CREATE above is fixed for fresh databases; this
+-- repairs the constraint on every database that already exists.
+--
+-- Dropped by name, which is the name Postgres generates for this column and
+-- table. IF EXISTS on the drop plus an unconditional re-add keeps it
+-- idempotent, and re-adding validates against existing rows -- which is safe
+-- here because nothing has been able to orphan one.
+ALTER TABLE ai_usage DROP CONSTRAINT IF EXISTS ai_usage_material_id_fkey;
+ALTER TABLE ai_usage ADD CONSTRAINT ai_usage_material_id_fkey
+  FOREIGN KEY (material_id) REFERENCES materials(id) ON DELETE SET NULL;
 `;
 
 /** Apply the schema. Idempotent — every statement is IF NOT EXISTS. */

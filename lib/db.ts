@@ -1091,6 +1091,105 @@ export async function logObservation(args: {
   );
 }
 
+/* ── WHAT WAS ACTUALLY TAUGHT ───────────────────────────────────────────────
+   See the note on `teaching_log` in lib/schema.ts for why this table exists
+   and why it is a root table rather than a child of materials. */
+
+export interface TaughtRow {
+  id: number;
+  /** null once the pack it described has been deleted — the record outlives it */
+  material_id: number | null;
+  taught_by: number | null;
+  lesson_title: string;
+  cohort: string;
+  taught_on: string;
+  pacing: string;
+  rating: number;
+  note: string;
+  /** page titles the coach actually skipped */
+  skipped: string[];
+  created_at: string;
+}
+
+function parseTaught(r: Record<string, unknown>): TaughtRow {
+  let skipped: string[] = [];
+  try {
+    const v = JSON.parse((r.skipped as string) || "[]");
+    if (Array.isArray(v)) skipped = v.filter((x): x is string => typeof x === "string");
+  } catch {
+    /* A hand-edited or truncated value costs the skip list and nothing more.
+       This is read by a weekly summary, not at a security boundary. */
+  }
+  return { ...(r as object), skipped } as TaughtRow;
+}
+
+export async function logTaught(
+  scope: Scope,
+  args: {
+    materialId: number;
+    lessonTitle: string;
+    cohort: string;
+    taughtOn: string;
+    pacing: string;
+    rating: number;
+    note: string;
+    skipped: string[];
+  }
+): Promise<number> {
+  /* The material is re-checked against the organization here rather than
+     trusted from the caller, because this is the one write that can attach a
+     row to a lesson: an id arriving with a request is an id the caller chose.
+     A mismatch writes nothing rather than writing an unlinked row, so a
+     teacher never sees a phantom entry in their own week. */
+  const owned = await one<{ id: number }>(
+    "SELECT id FROM materials WHERE id = ? AND org_id = ?",
+    [args.materialId, scope.orgId]
+  );
+  if (!owned) throw new Error("No such lesson in this organization.");
+  return insert(
+    `INSERT INTO teaching_log
+       (org_id, material_id, taught_by, lesson_title, cohort, taught_on, pacing, rating, note, skipped)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      scope.orgId,
+      args.materialId,
+      scope.userId,
+      args.lessonTitle,
+      args.cohort,
+      args.taughtOn,
+      args.pacing,
+      args.rating,
+      args.note,
+      JSON.stringify(args.skipped),
+    ]
+  );
+}
+
+/**
+ * What this teacher taught, newest first.
+ *
+ * Scoped to `taught_by` as well as the organization, because a digest is one
+ * person's week: blending two coaches who share a library would describe
+ * nobody's. `since` is compared as text — `taught_on` is a "YYYY-MM-DD" string
+ * and lexicographic order is chronological order in that format, which is why
+ * it was chosen.
+ */
+export async function listTaught(
+  scope: Scope,
+  opts: { since?: string; limit?: number } = {}
+): Promise<TaughtRow[]> {
+  const rows = await all(
+    `SELECT * FROM teaching_log
+      WHERE org_id = ? AND taught_by = ?${opts.since ? " AND taught_on >= ?" : ""}
+      ORDER BY taught_on DESC, id DESC
+      LIMIT ?`,
+    opts.since
+      ? [scope.orgId, scope.userId, opts.since, opts.limit ?? 200]
+      : [scope.orgId, scope.userId, opts.limit ?? 200]
+  );
+  return rows.map(parseTaught);
+}
+
 export async function listRounds(scope: Scope): Promise<RoundRow[]> {
   return all<RoundRow>("SELECT * FROM rounds WHERE org_id = ? ORDER BY id DESC", [
     scope.orgId,

@@ -212,7 +212,8 @@ export async function POST(
                   // the same rule class plans and word banks already follow.
                   inherit: inputs.design.inherit,
                 },
-                inputs.recentActivity
+                inputs.recentActivity,
+                inputs.teachingFeedback
               )
             : generateSimpleContent(
                 material.type,

@@ -1442,6 +1442,8 @@ interface LevelHints {
   constraints?: string;
   /** this teacher's own recent packs leaned on the same activity shapes — see lib/analytics.ts */
   recentActivity?: string;
+  /** whether this teacher's own lessons actually fit the room — see lib/weekly-digest.ts */
+  teachingFeedback?: string;
 }
 
 /**
@@ -1599,6 +1601,13 @@ ${hints.recurringCorrections}
       hints.recentActivity
         ? `
 🔁 VARIETY, FOR THIS TEACHER SPECIFICALLY: ${hints.recentActivity}
+`
+        : ""
+    }${
+      hints.teachingFeedback
+        ? `
+⏱ WHAT HAPPENED WHEN THIS TEACHER LAST TAUGHT — measured from lessons they actually ran, not estimated. This is the only real evidence there is about whether the durations in these packs survive a real room, so it OUTRANKS the default page count for this lesson's length:
+${hints.teachingFeedback}
 `
         : ""
     }
@@ -1912,7 +1921,8 @@ function buildHints(
   classroomEvidence: string,
   exemplar: unknown,
   recurringCorrections = "",
-  recentActivity = ""
+  recentActivity = "",
+  teachingFeedback = ""
 ): LevelHints {
   return {
     gradeBand: pack.gradeBand,
@@ -1924,6 +1934,7 @@ function buildHints(
     exemplar,
     recurringCorrections,
     recentActivity,
+    teachingFeedback,
     formatGuidance: formatForPrompt(pack.format, subject),
     debateFormatGuidance: debateFormatForPrompt(pack.debateFormat),
     designMotif: pack.designMotif,
@@ -2217,7 +2228,9 @@ export async function* generateLessonPack(
     generate?: (pack: LessonPack, avoid: string) => Promise<DesignSystem>;
   } = {},
   /** this teacher's recent packs leaned on the same activity shapes — see lib/analytics.ts */
-  recentActivity = ""
+  recentActivity = "",
+  /** whether this teacher's own lessons actually fit the room — see lib/weekly-digest.ts */
+  teachingFeedback = ""
 ): AsyncGenerator<StageEvent> {
   const def = subjectDef(subject);
   // Resume-aware: unless `fresh`, keep whatever the last (interrupted) run left
@@ -2225,7 +2238,7 @@ export async function* generateLessonPack(
   // a clean rebuild.
   let pack: LessonPack = fresh ? clearGenerated(initial) : { ...initial };
   let outline: Outline | null = null;
-  const hints = buildHints(subject, initial, siblings, classroomEvidence, exemplar, recurringCorrections, recentActivity);
+  const hints = buildHints(subject, initial, siblings, classroomEvidence, exemplar, recurringCorrections, recentActivity, teachingFeedback);
 
   // ── 1. Outline ──
   // Priority: a remix inherits a proven skeleton; else an author-reviewed
