@@ -3,7 +3,7 @@ import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import { BatchCoalescer, sdkBatchClient } from "@/lib/batch-queue";
 import { overnightStatus, runOvernight } from "@/lib/overnight";
-import { BUDGET_MODE_IDS, setBudgetMode } from "@/lib/model-policy";
+import { BUDGET_MODE_IDS, withBudgetMode } from "@/lib/model-policy";
 import { requireBuilder } from "@/lib/api/guards";
 import { conflict, readBody, serverError } from "@/lib/api/request";
 
@@ -63,20 +63,23 @@ export async function POST(req: NextRequest) {
     return serverError("ANTHROPIC_API_KEY is not set.");
   }
 
-  // Set only after the run is cleared to start — a rejected request must not
-  // leave the process on a budget mode nobody chose.
-  if (body.budgetMode) setBudgetMode(body.budgetMode);
-
-  const run = runOvernight(scope, ids, {
-    fresh: body.fresh,
-    autoQa: body.autoQa,
-    autoDesign: body.autoDesign,
-    role,
-    makeCoalescer: () =>
-      new BatchCoalescer(sdkBatchClient(new Anthropic()), {
-        onEvent: (e) => overnightStatus()?.events.push(e),
-      }),
-  });
+  /* The mode wraps the run rather than being written to a module variable.
+     An overnight run outlives its request, so the scope has to travel with the
+     work — which AsyncLocalStorage does through async continuations, and a
+     module global could only do by setting the price for every other request
+     on the instance for as long as the run lasts. */
+  const run = withBudgetMode(body.budgetMode ?? "economy", async () =>
+    runOvernight(scope, ids, {
+      fresh: body.fresh,
+      autoQa: body.autoQa,
+      autoDesign: body.autoDesign,
+      role,
+      makeCoalescer: () =>
+        new BatchCoalescer(sdkBatchClient(new Anthropic()), {
+          onEvent: (e) => overnightStatus()?.events.push(e),
+        }),
+    })
+  );
   // Deliberately not awaited — but a rejection must not become an unhandled
   // rejection that takes the server down at 3am.
   run.catch(() => {});

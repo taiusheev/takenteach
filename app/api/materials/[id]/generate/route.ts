@@ -9,7 +9,7 @@ import {
 } from "@/lib/db";
 import { generateLessonPack, generateSimpleContent, describeAiError } from "@/lib/ai";
 import { buildInputs } from "@/lib/overnight";
-import { BUDGET_MODE_IDS, budgetMode, setBudgetMode } from "@/lib/model-policy";
+import { BUDGET_MODE_IDS, withBudgetMode } from "@/lib/model-policy";
 import { LessonPack } from "@/lib/lesson-pack-schema";
 import { loadEditableMaterial } from "@/lib/api/guards";
 import { badRequest, readBody } from "@/lib/api/request";
@@ -136,14 +136,12 @@ export async function POST(
   // "Regenerate all" clears the pack for a clean rebuild; a plain build resumes
   // past whatever stages an interrupted run already completed.
   const { fresh, autoQa, autoDesign, resume } = parsed.data;
-  // Which models the stages run on, and how hard they think. Set for the whole
-  // run before any stage starts, so the estimate the founder just read on the
-  // Build tab and the calls this build makes come from the same table.
-  if (parsed.data.budgetMode) setBudgetMode(parsed.data.budgetMode);
-  // Read back rather than reusing the request field: the mode is a process
-  // default the body may or may not override, and the usage row must record
-  // what actually ran, not what was asked for.
-  const mode = budgetMode();
+  /* Which models the stages run on, and how hard they think.
+     Taken from THIS request and carried in an AsyncLocalStorage scope around
+     the build below — not written to a module variable, which on serverless
+     would set the price for whoever shares the warm instance next, and could
+     change a build's mode between its own legs. See withBudgetMode. */
+  const mode = parsed.data.budgetMode ?? "economy";
 
   /* CUMULATIVE CEILING. A build is several requests, each metered separately,
      so a per-run limit cannot see the total — the runaway this guards against
@@ -244,7 +242,8 @@ export async function POST(
               );
         // Meter the whole build so the last event can report what it cost and,
         // more importantly, whether the shared prompt cache was actually hit.
-        await withUsageMeter(
+        await withBudgetMode(mode, () =>
+          withUsageMeter(
           async () => {
             const leg = await consumeLeg(stream, {
               budgetMs: LEG_BUDGET_MS,
@@ -317,16 +316,17 @@ export async function POST(
               });
             }
           },
-          {
-            /* Whichever is tighter: the per-leg ceiling, or what remains of
-               this lesson's total allowance. The floor keeps a nearly-exhausted
-               lesson from being given a budget so small that a single legitimate
-               call trips it on arrival. */
-            budgetUsd: Math.min(
-              LEG_BUDGET_USD,
-              Math.max(0.5, MATERIAL_BUDGET_USD - alreadySpent)
-            ),
-          }
+            {
+              /* Whichever is tighter: the per-leg ceiling, or what remains of
+                 this lesson's total allowance. The floor keeps a nearly-exhausted
+                 lesson from being given a budget so small that a single legitimate
+                 call trips it on arrival. */
+              budgetUsd: Math.min(
+                LEG_BUDGET_USD,
+                Math.max(0.5, MATERIAL_BUDGET_USD - alreadySpent)
+              ),
+            }
+          )
         );
         if (finished) {
           await logActivity(material.id, role, "quick-build-done");

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 /**
  * What each AI task is allowed to spend.
  *
@@ -255,28 +256,66 @@ export const BUDGET_MODES: { id: BudgetMode; label: string; blurb: string }[] = 
  * dropped outright rather than run on a cheaper model, because a whole extra
  * pack-sized call is the single largest thing left to cut.
  */
-export function runsPolish(mode: BudgetMode = current): boolean {
+export function runsPolish(mode: BudgetMode = budgetMode()): boolean {
   return mode !== "economy";
 }
 
 /**
- * The budget mode for this process. A module-level default rather than a
- * per-request parameter because it has to reach ~16 call sites across two
- * modules; the build route overrides it per run.
+ * THE BUDGET MODE, SCOPED TO ONE REQUEST.
  *
- * Economy is the default deliberately: the founder's standing instruction is to
- * spend as little as possible, and the two things that must not be cheapened —
- * the evidence deck and the content review — stay on the top model in every
- * mode. Raising it is one click on the Build tab.
+ * ── WHY THIS IS NOT A MODULE VARIABLE ANY MORE ───────────────────────────
+ * It was `let current: BudgetMode`, and that is a bug the moment the app runs
+ * anywhere but one process — which is the whole point of the deploy
+ * (docs/DEPLOYMENT.md §4 lists it as work still to do). Three ways it bites,
+ * all silent:
+ *
+ *   · One organization's mode becomes another's. A warm serverless instance is
+ *     shared, so a school that picked Maximum sets the price for whoever lands
+ *     on that instance next. Cross-tenant, and about money.
+ *   · A build changes price mid-flight. A build is many requests now, and
+ *     nothing guarantees two legs hit the same instance — so a run started at
+ *     Maximum can finish at Economy, or the reverse, with no record of either.
+ *   · It re-keys the prompt cache. `effort` is part of the cache key, and
+ *     `policyFor` reads the mode to set it. Two legs disagreeing means the
+ *     ~12k-token prefix is written again instead of read, at 2x instead of
+ *     0.1x. That is the 0%-hit-rate signature, arriving from a direction
+ *     nobody would think to look.
+ *
+ * AsyncLocalStorage is the fix the codebase already trusts for exactly this —
+ * see lib/usage-meter.ts, which the deployment notes single out as the piece of
+ * module state that is *fine* because it is request-scoped by design.
+ *
+ * Economy remains the default: the standing instruction is to spend as little
+ * as possible, and the two things that must not be cheapened — the evidence
+ * deck and the content review — stay on the top model in every mode.
  */
-let current: BudgetMode = "economy";
+const modeStore = new AsyncLocalStorage<{ mode: BudgetMode }>();
 
+/**
+ * Run `fn` with this budget mode. Everything inside — including the ~16 call
+ * sites that read it indirectly through `policyFor` — sees it, and nothing
+ * outside does.
+ */
+export function withBudgetMode<T>(mode: BudgetMode, fn: () => Promise<T>): Promise<T> {
+  return modeStore.run({ mode }, fn);
+}
+
+/**
+ * Kept for the one caller that cannot wrap: the overnight runner starts work
+ * and returns before it finishes, so there is no scope to run inside.
+ *
+ * It sets the mode for the CURRENT store if there is one, and otherwise does
+ * nothing at all — which is the safe direction. A background job that cannot
+ * express its mode gets the Economy default rather than silently setting the
+ * price for every other request on the instance.
+ */
 export function setBudgetMode(mode: BudgetMode) {
-  current = mode;
+  const s = modeStore.getStore();
+  if (s) s.mode = mode;
 }
 
 export function budgetMode(): BudgetMode {
-  return current;
+  return modeStore.getStore()?.mode ?? "economy";
 }
 
 export function isBudgetMode(v: unknown): v is BudgetMode {
@@ -284,7 +323,7 @@ export function isBudgetMode(v: unknown): v is BudgetMode {
 }
 
 /** What model and effort a task runs at, in a given mode (defaults to current). */
-export function policyFor(task: AiTask, mode: BudgetMode = current): TaskPolicy {
+export function policyFor(task: AiTask, mode: BudgetMode = budgetMode()): TaskPolicy {
   const p = TABLES[mode][task];
   // Staged tasks share a cached prefix, and effort is part of its key — so the
   // table's per-task effort is deliberately overridden here rather than trusted.
