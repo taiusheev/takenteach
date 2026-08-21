@@ -34,6 +34,27 @@ import { IconSearch } from "@/components/shell/icons";
  * checked it. That is a weaker claim and a true one.
  */
 
+/** Verdicts that mean a person must look before this pack goes anywhere. */
+const DOUBTFUL = new Set(["suspect", "unsupported"]);
+
+const VERDICT_LABEL: Record<string, string> = {
+  verified: "Reviewer: looks real",
+  plausible: "Reviewer: check the exact figure",
+  suspect: "Reviewer: doubtful",
+  unsupported: "Reviewer: cannot support this",
+};
+
+/* `plausible` is amber rather than red deliberately: it means "consistent
+   with a real source, confirm the number", which is a job for the person
+   reading this panel — not a fault. Red is reserved for the two verdicts that
+   block review. */
+const TONE: Record<string, string> = {
+  verified: "border-ok/40 bg-ok/[0.07] text-ok",
+  plausible: "border-warn/40 bg-warn/[0.07] text-warn",
+  suspect: "border-danger/50 bg-danger/[0.08] text-danger",
+  unsupported: "border-danger/50 bg-danger/[0.08] text-danger",
+};
+
 export default function SourcesPanel({
   pack,
   onChange,
@@ -65,8 +86,37 @@ export default function SourcesPanel({
     return map;
   }, [pack.evidenceCards, pack.activities]);
 
+  /* WHAT THE REVIEWER ALREADY SAID ABOUT EACH CARD.
+
+     Content QA grades every citation `verified | plausible | suspect |
+     unsupported` and writes a specific note saying what to check. That
+     verdict was going into `contentQaJson` and reaching nobody: no gate read
+     it, and this panel — the one screen where a person ticks a card as
+     checked — did not show it. Signing off was therefore ceremonial: a coach
+     faced six identical rows with no idea which one the reviewer had doubts
+     about.
+
+     Same shape as the QA-findings-into-actions fix: the system already knew,
+     and the person deciding could not see it. */
+  const qa = useMemo(() => {
+    const map = new Map<string, { verdict: string; note: string }>();
+    if (!pack.contentQaJson) return map;
+    try {
+      for (const c of JSON.parse(pack.contentQaJson)?.citations ?? []) {
+        map.set(String(c.id).trim().toUpperCase(), { verdict: c.verdict, note: c.note });
+      }
+    } catch {
+      /* An unreadable report costs the annotations and nothing else — the
+         panel still works, it just cannot say what the reviewer thought. */
+    }
+    return map;
+  }, [pack.contentQaJson]);
+
   const cards = pack.evidenceCards;
   const verified = cards.filter((c) => c.verified).length;
+  const doubted = cards.filter(
+    (c) => !c.verified && DOUBTFUL.has(qa.get(c.id.trim().toUpperCase())?.verdict ?? "")
+  ).length;
 
   function update(i: number, patch: Partial<EvidenceCard>) {
     onChange(cards.map((c, j) => (j === i ? { ...c, ...patch } : c)));
@@ -103,19 +153,31 @@ export default function SourcesPanel({
       <p className="mb-3 text-[11.5px] leading-relaxed text-fg3">
         Every card is AI-drafted. Tick one only once you have opened the source
         and seen the quotation.
+        {doubted > 0 && (
+          <>
+            {" "}
+            <strong className="font-semibold text-danger">
+              {doubted} {doubted === 1 ? "card is" : "cards are"} flagged below and
+              cannot go to review unchecked.
+            </strong>
+          </>
+        )}
       </p>
 
       <ul className="flex flex-col gap-2">
         {cards.map((c, i) => {
           const id = c.id.trim().toUpperCase();
           const used = usage.get(id) ?? [];
+          const verdict = qa.get(id);
           return (
             <li
               key={i}
               className={`rounded-lg border p-2.5 ${
                 c.verified
                   ? "border-ok/40 bg-ok/[0.06]"
-                  : "border-inkline bg-surface-alt/40"
+                  : DOUBTFUL.has(qa.get(c.id.trim().toUpperCase())?.verdict ?? "")
+                    ? "border-danger/50 bg-danger/[0.06]"
+                    : "border-inkline bg-surface-alt/40"
               }`}
             >
               <div className="flex items-start gap-2">
@@ -135,6 +197,21 @@ export default function SourcesPanel({
                     {[c.publication, c.year].filter(Boolean).join(" · ") ||
                       "No publication named"}
                   </p>
+
+                  {/* The reviewer's own verdict on THIS card, at the moment of
+                      signing it off. A note saying "the report is from 2018,
+                      not 2020" is worth more here than anywhere else in the
+                      product, and it was previously only inside a JSON blob. */}
+                  {verdict && (
+                    <div
+                      className={`mt-1.5 rounded-md border px-2 py-1 text-[11px] leading-snug ${TONE[verdict.verdict] ?? "border-inkline text-fg3"}`}
+                    >
+                      <span className="font-bold uppercase tracking-wide">
+                        {VERDICT_LABEL[verdict.verdict] ?? verdict.verdict}
+                      </span>
+                      {verdict.note && <span className="opacity-90"> — {verdict.note}</span>}
+                    </div>
+                  )}
 
                   {/* The URL is the thing a verifier actually needs, and it is
                       the field the generator most often cannot supply — so it

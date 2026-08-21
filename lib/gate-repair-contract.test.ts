@@ -47,6 +47,30 @@ const CODE_REPAIRED = new Map<string, string>([
 ]);
 
 /**
+ * GATES A MODEL MUST NOT BE ALLOWED TO CLEAR.
+ *
+ * A third category, and the reason it exists is worth stating plainly: for
+ * these, an automatic repair would be actively worse than no repair. They are
+ * not debt, and they are not waiting for someone to get to them.
+ *
+ * `citations-not-suspect` is the case that forced this list. Content QA has
+ * flagged a source as possibly fabricated; the fix is a person opening the
+ * publication and confirming it exists. A model repair could only rewrite the
+ * card — which would launder a fabrication into something that passes the
+ * gate, using the same model that may have invented it. The gate would then be
+ * worse than absent, because it would look like a check.
+ *
+ * `verified` is a human's flag by design (see lib/lesson-pack-schema.ts); this
+ * is the enforcement of that decision rather than an exception to it.
+ */
+const HUMAN_ONLY = new Map<string, string>([
+  [
+    "citations-not-suspect",
+    "a doubted citation is cleared by a person opening the source; a model rewriting the card would launder a fabrication past the check",
+  ],
+]);
+
+/**
  * Pre-existing locked doors. Real debt, listed so it is visible and so the
  * ratchet has something to hold. Adding to this list should require the same
  * argument as adding a gate with no repair, because it is the same thing.
@@ -116,15 +140,20 @@ test("every repair targets a gate that exists", () => {
 test("no NEW gate is a locked door", () => {
   const repairs = repairedIds();
   const unrepaired = gateIds().filter(
-    (g) => !repairs.has(g) && !CODE_REPAIRED.has(g) && !KNOWN_UNREPAIRED.has(g)
+    (g) =>
+      !repairs.has(g) &&
+      !CODE_REPAIRED.has(g) &&
+      !HUMAN_ONLY.has(g) &&
+      !KNOWN_UNREPAIRED.has(g)
   );
   assert.deepEqual(
     unrepaired,
     [],
     `These gates block review and nothing can fix them automatically:\n` +
       unrepaired.map((g) => `  ${g}`).join("\n") +
-      `\n\nAdd a rung to the repair ladder in lib/ai.ts, or — if it is genuinely ` +
-      `fixed by code elsewhere — add it to CODE_REPAIRED with the reason.`
+      `\n\nAdd a rung to the repair ladder in lib/ai.ts; or if it is genuinely ` +
+      `fixed by code elsewhere, add it to CODE_REPAIRED with the reason; or if a ` +
+      `model MUST NOT be the thing that clears it, add it to HUMAN_ONLY and say why.`
   );
 });
 

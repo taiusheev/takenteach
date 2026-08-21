@@ -954,6 +954,67 @@ export function runChecklist(
     );
   }
 
+  /* ── A SOURCE CONTENT-QA DOUBTS MUST NOT REACH A REVIEWER UNSIGNED ────────
+     Content QA already grades every card `verified | plausible | suspect |
+     unsupported`, with a specific note saying what to check. Until now that
+     verdict was written into `contentQaJson` and read by nobody: no gate
+     consulted it, and the sign-off panel — the one screen where a human ticks
+     a card as checked — did not show it. So the single highest-stakes signal
+     in the product was computed, stored, and dropped.
+
+     The open-weight trial made the shape of the risk concrete. A card cited
+     "UNEP, Single-Use Plastics: A Roadmap for Sustainability, 2020" with a
+     well-written scope limit and a confident tactical note. The report is from
+     2018, and the event it named does not exist. Every structural gate passed
+     it, because they can confirm a card HAS an institution and a year and
+     cannot tell you the year is wrong.
+
+     ── WHY ONLY suspect/unsupported BLOCK ──────────────────────────────────
+     `plausible` means "consistent with a real source, confirm the exact
+     figure" — and the person who confirms it is the reviewer this gate stands
+     in front of. Blocking on it would demand the check before the checker sees
+     the pack, and would stop every pack in the library, since no card has ever
+     been ticked. Those cards are surfaced at sign-off instead.
+
+     `suspect` and `unsupported` are different: QA is saying this may be
+     fabricated. That must not go to a human as though it were finished work,
+     and a human tick on the card is the one thing that clears it — because a
+     person looked. */
+  if (pack.evidenceCards.length > 0 && pack.contentQaJson) {
+    let verdicts: { id: string; verdict: string; note: string }[] = [];
+    try {
+      verdicts = JSON.parse(pack.contentQaJson)?.citations ?? [];
+    } catch {
+      /* A malformed report is not evidence against the citations. The stale-QA
+         machinery elsewhere already surfaces a report that cannot be read. */
+      verdicts = [];
+    }
+    const signed = new Map(
+      pack.evidenceCards.map((c) => [c.id.trim().toUpperCase(), c.verified])
+    );
+    const doubted = verdicts.filter(
+      (v) =>
+        (v.verdict === "suspect" || v.verdict === "unsupported") &&
+        // Only cards still in the deck; a verdict about a card since deleted
+        // is history, not a blocker.
+        signed.has(String(v.id).trim().toUpperCase()) &&
+        !signed.get(String(v.id).trim().toUpperCase())
+    );
+    add(
+      "citations-not-suspect",
+      "No source is flagged as doubtful and unchecked",
+      doubted.length === 0,
+      doubted.length === 0
+        ? verdicts.length > 0
+          ? `Content QA raised no doubts it can see (${verdicts.length} card${verdicts.length === 1 ? "" : "s"} reviewed)`
+          : "No citation verdicts in the stored review"
+        : doubted
+            .map((v) => `Card ${v.id} — ${v.verdict}: ${v.note}`)
+            .join(" · ") +
+          " — fix the card, or open Sources and tick it once you have checked the original."
+    );
+  }
+
   // ── No placeholder text ──
   // (Test finding: a modeled page shipped with keyIdea ":" — a field the model
   // opened and never filled. It renders as an empty box on a printed page.)

@@ -143,12 +143,10 @@ if (failed) {
 if (pack) {
   const items = runChecklist(pack).items;
   const bad = items.filter((i) => !i.passed);
-  const blocking = bad.filter((i) => i.blocking);
   const ready = packReadiness(pack);
 
   console.log(`\n  pages            ${pack.activities.length}`);
-  console.log(`  checklist        ${items.length - bad.length}/${items.length} passing`);
-  console.log(`  blocking fails   ${blocking.length}`);
+  console.log(`  checklist        ${items.length - bad.length}/${items.length} passing (every gate blocks review)`);
   console.log(`  teachable        ${ready.canTeach ? "yes" : "no"}`);
   if (scorePack) {
     try { console.log(`  pack score       ${JSON.stringify(scorePack(pack)).slice(0, 200)}`); } catch {}
