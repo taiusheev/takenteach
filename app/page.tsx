@@ -16,10 +16,13 @@ import { LessonPack } from "@/lib/lesson-pack-schema";
 import { unitKey } from "@/lib/unit-plan";
 import { packReadiness } from "@/lib/readiness";
 import { resumeCards } from "@/lib/resume";
+import { weeklyDigest } from "@/lib/weekly-digest";
+import { listTaught, listStudents, listAllObservations } from "@/lib/db";
 import StatusChip from "@/components/StatusChip";
 import Greeting from "@/components/dash/Greeting";
 import LibraryPulse from "@/components/dash/LibraryPulse";
 import ContinueRow from "@/components/dash/ContinueRow";
+import ThisWeek from "@/components/dash/ThisWeek";
 import NewMaterialButton from "@/components/NewMaterialButton";
 import DuplicateButton from "@/components/DuplicateButton";
 import LibraryControls from "@/components/LibraryControls";
@@ -42,6 +45,17 @@ export default async function LibraryPage({
   const sp = await searchParams;
   const all = await listMaterials(scope);
   const summary = librarySummary(all);
+
+  /* The week, from the records of it. One extra query each for the taught
+     log, the roster and the observations — the materials list above is
+     reused rather than re-fetched. See lib/weekly-digest.ts. */
+  const digest = weeklyDigest({
+    today: new Date().toISOString().slice(0, 10),
+    taught: await listTaught(scope),
+    materials: all,
+    students: await listStudents(scope),
+    observations: await listAllObservations(scope),
+  });
 
   // Classes (units) — lesson-packs grouped by subject + series. Surfaced as a
   // strip so a multi-lesson class is reachable as one thing, not ten rows.
@@ -154,6 +168,10 @@ export default async function LibraryPage({
           about THIS teacher's next twenty minutes; everything below is about
           the library as a whole. */}
       <ContinueRow cards={resumeCards(all)} />
+
+      {/* What happened, and what is stalled. Below the unfinished work,
+          which is about the next twenty minutes; this is the week around it. */}
+      <ThisWeek digest={digest} />
 
       <div className="mx-auto max-w-6xl">
 

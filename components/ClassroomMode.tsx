@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import TeachingLog from "@/components/TeachingLog";
 import Link from "next/link";
 import type { Activity, LessonPack } from "@/lib/lesson-pack-schema";
 import { debateFormat, type SpeechSlot } from "@/lib/debate-formats";
@@ -37,6 +38,14 @@ export default function ClassroomMode({
   const [answers, setAnswers] = useState(false);
   const activity = i === 0 ? null : pack.activities[i - 1];
   const format = debateFormat(pack.debateFormat);
+
+  /* WHICH PAGES ACTUALLY WENT UP ON THE SCREEN.
+     The teaching log asks which pages were skipped, and a coach at the end of
+     a lesson should not have to remember. This is the only place that knows,
+     so it counts — and it counts VISITS rather than the furthest slide
+     reached, because a coach who jumps from page 3 to page 7 skipped two
+     pages and a high-water mark would record them as covered. */
+  const [visited, setVisited] = useState<Set<number>>(() => new Set([0]));
 
   // ── timer ────────────────────────────────────────────────────────────────
   // Counting down by decrementing on an interval drifts — over a 15-minute
@@ -82,6 +91,7 @@ export default function ClassroomMode({
     (n: number) => {
       const to = Math.max(0, Math.min(slides - 1, n));
       setI(to);
+      setVisited((s) => (s.has(to) ? s : new Set(s).add(to)));
       setEndsAt(null);
       setSpeech(null);
       setLeft((pack.activities[to - 1]?.durationMin ?? 0) * 60);
@@ -267,14 +277,30 @@ export default function ClassroomMode({
           <span className="hidden text-[11px] text-fg3 sm:block">
             ← → move · Space timer · R reset · A answers · F fullscreen
           </span>
-          <button
-            type="button"
-            onClick={() => go(i + 1)}
-            disabled={i === slides - 1}
-            className="btn btn-primary btn-sm"
-          >
-            Next →
-          </button>
+          {/* At the end of the pack, "Next" has nothing to advance to and was
+              simply disabled — the moment a coach is most able to say how the
+              lesson went, spent on a dead button. It becomes the log instead,
+              carrying the pages that never came up on screen. */}
+          {i === slides - 1 ? (
+            <TeachingLog
+              materialId={materialId}
+              defaultCohort={pack.series ?? ""}
+              pageTitles={pack.activities.map((a) => a.title)}
+              unvisited={pack.activities
+                .map((a, n) => (visited.has(n + 1) ? null : a.title))
+                .filter((t): t is string => t !== null)}
+              className="btn btn-primary btn-sm"
+              label="Finish — how did it go?"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => go(i + 1)}
+              className="btn btn-primary btn-sm"
+            >
+              Next →
+            </button>
+          )}
         </div>
       </footer>
     </div>

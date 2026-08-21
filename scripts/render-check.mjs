@@ -44,62 +44,10 @@
  * future edit reaches into `lib/db` from a presentational component, this
  * script is what will notice.
  */
-import { registerHooks } from "node:module";
-import ts from "typescript";
+/* The loader lives in scripts/render-loader.mjs so more than one harness can
+   use it — see the note there about the lib/db import trap. */
 import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import "./test-resolver.mjs";
-
-const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SHIM = path.join(ROOT, "scripts", ".render-nav-shim.mjs");
-
-/* next/navigation reaches for a mounted app router that does not exist outside
-   Next. Only the cover's logo control touches it, and only to build a link. */
-fs.writeFileSync(
-  SHIM,
-  `export const useRouter = () => ({ push(){}, replace(){}, refresh(){}, back(){}, forward(){}, prefetch(){} });
-export const usePathname = () => "/";
-export const useSearchParams = () => new URLSearchParams();
-export const useParams = () => ({});
-export const redirect = () => {};
-export const notFound = () => {};
-`
-);
-
-registerHooks({
-  resolve(spec, ctx, next) {
-    if (spec === "next/navigation") return next(pathToHref(SHIM), ctx);
-    // The package ships extensionless deep paths that only a bundler resolves.
-    if (spec.startsWith("next/") && !/\.(js|mjs|cjs)$/.test(spec)) {
-      try {
-        return next(spec + ".js", ctx);
-      } catch {
-        /* fall through to the plain specifier */
-      }
-    }
-    return next(spec, ctx);
-  },
-  load(url, ctx, next) {
-    if (/\.tsx?($|\?)/.test(url) && !url.includes("node_modules")) {
-      const source = ts.transpileModule(fs.readFileSync(new URL(url), "utf8"), {
-        compilerOptions: {
-          target: ts.ScriptTarget.ES2022,
-          module: ts.ModuleKind.ESNext,
-          jsx: ts.JsxEmit.ReactJSX,
-          jsxImportSource: "react",
-        },
-        fileName: url,
-      }).outputText;
-      return { format: "module", shortCircuit: true, source };
-    }
-    return next(url, ctx);
-  },
-});
-
-function pathToHref(p) {
-  return new URL(`file:///${p.replace(/\\/g, "/")}`).href;
-}
+import { cleanupShim } from "./render-loader.mjs";
 
 const React = (await import("react")).default;
 const { renderToStaticMarkup } = await import("react-dom/server.browser");
@@ -248,7 +196,7 @@ const pack = lessonPackSchema.parse({
 const html = renderToStaticMarkup(
   React.createElement(PrintView, { materialId: 1, pack, kit: DEFAULT_KIT_CONFIG, kitId: 1 })
 );
-fs.rmSync(SHIM, { force: true });
+cleanupShim();
 
 /* Opt-in dump, for measuring the sheet geometry in a browser rather than
    asserting on strings — RENDER_DUMP=path npm run render:check */

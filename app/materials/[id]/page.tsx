@@ -47,6 +47,7 @@ import type { ContentQa } from "@/lib/ai";
 import WorkflowActions from "@/components/WorkflowActions";
 import DeleteMaterialButton from "@/components/DeleteMaterialButton";
 import DuplicateButton from "@/components/DuplicateButton";
+import TeachingLog from "@/components/TeachingLog";
 import StyleKitPicker from "@/components/StyleKitPicker";
 import DesignButton from "@/components/DesignButton";
 import { IconPencil, IconPlay, IconPrinter } from "@/components/shell/icons";
@@ -598,13 +599,24 @@ export default async function MaterialPage(ctx: {
               it. The play glyph was a typed "▶", which sits on the baseline
               and renders as a different character on every platform. */}
           {isPack && readiness?.canTeach && (
-            <Link
-              href={`/materials/${material.id}/teach`}
-              className="btn btn-secondary"
-            >
-              <IconPlay size={13} />
-              Teach it
-            </Link>
+            <>
+              <Link
+                href={`/materials/${material.id}/teach`}
+                className="btn btn-secondary"
+              >
+                <IconPlay size={13} />
+                Teach it
+              </Link>
+              {/* Classroom Mode offers this at the end of the pack, where it
+                  can pre-fill the skipped pages from what actually went up on
+                  screen. This is the way in for a coach who taught from the
+                  printout instead, which is most of them. */}
+              <TeachingLog
+                materialId={material.id}
+                defaultCohort={packContent.series ?? ""}
+                pageTitles={packContent.activities.map((a) => a.title)}
+              />
+            </>
           )}
           {editable && (
             <Link
