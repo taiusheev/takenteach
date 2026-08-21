@@ -55,18 +55,54 @@ export async function consumeLeg(
   let stagesCompleted = 0;
 
   for await (const event of stream) {
-    if (opts.aborted()) break;
+    /* PERSIST FIRST, EVEN IF THE CLIENT HAS GONE.
+       The abort check used to sit above this, and it cost real money. An event
+       reaching here is work the generator has ALREADY finished and the meter
+       has ALREADY billed; dropping it because a browser hung up does not save
+       anything, it just means the next leg buys the same stage again.
 
+       Measured on material #67: the evidence stage ran on five consecutive
+       legs, one call each, and never once landed — $1.72 spent, zero pages
+       written, and no error anywhere because nothing had gone wrong except
+       that the result was thrown away each time. The re-entrancy guard
+       (`needEvidence = pack.evidenceCards.length === 0`) was doing its job
+       perfectly; it was simply never given the cards to see.
+
+       Writing them is a few milliseconds against our own database. There is no
+       version of "the client left" that makes paying twice the better trade. */
     if (event.type === "stage-done" || event.type === "done") {
       await opts.onStageDone(event);
+      if (event.type === "stage-done") stagesCompleted++;
     }
-    opts.onEvent(event);
 
+    /* A BUILD FINISHING IS A FACT ABOUT THE BUILD, NOT ABOUT WHO IS WATCHING.
+       Checked above the abort, because the alternative reports `finished:
+       false` for a pack that is complete and on disk — so the route never
+       writes `quick-build-done`, and the history shows a build that started
+       and mysteriously never ended. Five of sixteen materials look like that.
+       Some of them are genuinely abandoned; this makes sure none of the rest
+       are merely mislabelled. */
     if (event.type === "done") {
+      if (!opts.aborted()) opts.onEvent(event);
       return { finished: true, stagesCompleted };
     }
+
+    /* Now honour the abort — unless this stage is holding a finished sibling.
+       `holdLeg` means "another result is already computed and billed and is
+       queued right behind me", and that is as true when the client hangs up as
+       when the budget runs out. Breaking here would close the generator and
+       discard it, which is precisely the loop that cost material #67 five
+       evidence calls.
+
+       `onEvent` sits below the check because the response stream the client was
+       reading is gone, and writing to a closed controller throws — turning a
+       tidy stop into an error the route reports as a failed build. */
+    const flushingSibling = event.type === "stage-done" && !!event.holdLeg;
+    if (opts.aborted() && !flushingSibling) break;
+
+    opts.onEvent(event);
+
     if (event.type === "stage-done") {
-      stagesCompleted++;
       /* THE BUDGET IS CHECKED HERE AND NOWHERE ELSE — after a stage has landed
          and been persisted, so the point we stop at and the state on disk are
          the same thing. Stopping mid-stage would discard work already paid for.

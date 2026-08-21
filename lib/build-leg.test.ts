@@ -271,4 +271,89 @@ describe("one leg of a build", () => {
       "once the held pair is flushed the budget applies again"
     );
   });
+
+  test("the client leaving does not discard a sibling already paid for", async () => {
+    /* THE $1.72 BUG, as a test.
+
+       Material #67 ran the evidence stage on five consecutive legs and never
+       once landed it: one model call each time, zero pages, and no error
+       anywhere — because nothing had gone wrong except that the result was
+       thrown away. Foundation and evidence are issued together in one
+       Promise.all, so by the time foundation yields, evidence is ALREADY
+       computed and ALREADY billed. `holdLeg` protected that against the
+       budget. It did not protect it against the client hanging up, and the
+       abort check sat above the persist, so the cards were dropped, the next
+       leg correctly saw an empty deck, and bought them again. */
+    const clock = { t: 0 };
+    let aborted = false;
+    const persisted: string[] = [];
+    const sent: string[] = [];
+    const res = await consumeLeg(
+      {
+        async *[Symbol.asyncIterator](): AsyncIterator<StageEvent> {
+          yield { type: "stage-start", stage: "foundation" };
+          yield { type: "stage-start", stage: "evidence" };
+          clock.t += 90_000; // both land together; both are already paid for
+          yield { type: "stage-done", stage: "foundation", pack: {} as never, holdLeg: true };
+          yield { type: "stage-done", stage: "evidence", pack: {} as never };
+          yield { type: "stage-start", stage: "activities-1" };
+          yield { type: "stage-done", stage: "activities-1", pack: {} as never };
+        },
+      },
+      {
+        budgetMs: 45_000,
+        now: () => clock.t,
+        aborted: () => aborted,
+        onStageDone: async (e) => {
+          persisted.push(e.stage ?? e.type);
+          // The teacher closes the tab the instant foundation lands.
+          if (e.stage === "foundation") aborted = true;
+        },
+        onEvent: (e) => sent.push(`${e.type}:${e.stage ?? ""}`),
+      }
+    );
+
+    assert.deepEqual(
+      persisted,
+      ["foundation", "evidence"],
+      "evidence was computed, billed, and thrown away because a browser closed"
+    );
+    assert.equal(res.stagesCompleted, 2, "a saved stage counts, even after the client left");
+    assert.equal(res.finished, false);
+    assert.ok(
+      !sent.includes("stage-done:evidence"),
+      "nothing may be written to a stream the client has already closed"
+    );
+    assert.ok(
+      !persisted.includes("activities-1"),
+      "the leg flushes what is paid for and then stops — it does not carry on building"
+    );
+  });
+
+  test("a build that finished is reported finished, even if nobody is listening", async () => {
+    /* Otherwise the route never writes , and the material
+       history shows a build that started and mysteriously never ended — which
+       is indistinguishable from one that really was abandoned. The pack is
+       complete and on disk either way; only the record was wrong. */
+    const clock = { t: 0 };
+    let aborted = false;
+    const persisted: string[] = [];
+    const res = await consumeLeg(
+      fakeBuild([{ stage: "design", ms: 1 }], clock),
+      {
+        budgetMs: 45_000,
+        now: () => clock.t,
+        aborted: () => aborted,
+        onStageDone: async (e) => {
+          persisted.push(e.stage ?? e.type);
+          // The tab closes during the FINAL write — the narrow window where the
+          // build is complete and the listener is already gone.
+          if (e.type === "done") aborted = true;
+        },
+        onEvent: () => {},
+      }
+    );
+    assert.equal(res.finished, true, "the build completed; the client leaving does not undo that");
+    assert.ok(persisted.includes("done"), "the finished pack must still be saved");
+  });
 });
