@@ -7,7 +7,7 @@ import { RegenSection, regenerateSection, describeAiError } from "@/lib/ai";
 import { LessonPack } from "@/lib/lesson-pack-schema";
 import { runChecklistFor } from "@/lib/checklist";
 import { loadEditableMaterial } from "@/lib/api/guards";
-import { metered } from "@/lib/api/metered";
+import { metered, checkSpend, ESTIMATE_USD } from "@/lib/api/metered";
 import { badRequest, readBody, serverError } from "@/lib/api/request";
 
 export const dynamic = "force-dynamic";
@@ -118,6 +118,13 @@ export async function POST(
         },
         material.id
       ))?.content ?? null;
+
+  /* The organization-level ceiling — see checkSpend in lib/api/metered.ts.
+     Before the call, not inside it: a refusal raised from within the metered
+     block would arrive as a 500 after the model had already been paid. */
+  const spend = await checkSpend(scope, ESTIMATE_USD.section);
+  if (!spend.allow) return badRequest(spend.reason);
+
   /* Gathered BEFORE the meter starts. These are three database queries, not
      model calls — inside the metered block they would inflate the recorded
      latency of the AI operation with time no model spent. */

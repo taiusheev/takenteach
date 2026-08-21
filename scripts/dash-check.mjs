@@ -19,7 +19,7 @@
  */
 
 import "./render-loader.mjs";
-import { checkHtml } from "./render-loader.mjs";
+import { checkHtml, cleanupShim } from "./render-loader.mjs";
 
 const React = (await import("react")).default;
 const { renderToStaticMarkup } = await import("react-dom/server.browser");
@@ -159,6 +159,7 @@ console.log("\nfinished lessons still waiting");
   ]);
 }
 
+cleanupShim();
 console.log(
   failed === 0 ? "\nThe week renders, and knows when to stay quiet.\n" : `\n${failed} check(s) failed.\n`
 );

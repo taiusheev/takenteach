@@ -4,8 +4,8 @@ import { logActivity, snapshotAndUpdate } from "@/lib/db";
 import { reviseLessonPack, describeAiError } from "@/lib/ai";
 import { LessonPack } from "@/lib/lesson-pack-schema";
 import { loadEditableMaterial } from "@/lib/api/guards";
-import { metered } from "@/lib/api/metered";
-import { readBody, serverError } from "@/lib/api/request";
+import { metered, checkSpend, ESTIMATE_USD } from "@/lib/api/metered";
+import { badRequest, readBody, serverError } from "@/lib/api/request";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -43,6 +43,13 @@ export async function POST(
   const parsed = await readBody(req, bodySchema);
   if (!parsed.ok) return parsed.response;
   const { instruction } = parsed.data;
+
+
+  /* The organization-level ceiling — see checkSpend in lib/api/metered.ts.
+     Before the call, not inside it: a refusal raised from within the metered
+     block would arrive as a 500 after the model had already been paid. */
+  const spend = await checkSpend(scope, ESTIMATE_USD.revise);
+  if (!spend.allow) return badRequest(spend.reason);
 
   const content = material.content as LessonPack;
   try {

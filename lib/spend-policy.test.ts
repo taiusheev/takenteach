@@ -21,6 +21,10 @@ import {
   CACHE_FLOOR,
   TYPICAL_BUILD_USD,
   WORST_BUILD_USD,
+  spendGate,
+  enforcedCeiling,
+  BILLING_LIVE,
+  RUNAWAY_CEILING_USD,
 } from "./spend-policy.ts";
 import type { UsageTotals } from "./usage-meter.ts";
 
@@ -179,4 +183,74 @@ test("the floor sits between the measured healthy and broken builds", () => {
 
 test("the worst case is dearer than the typical one, or the guard is pointless", () => {
   assert.ok(WORST_BUILD_USD > TYPICAL_BUILD_USD);
+});
+
+// ── what is actually ENFORCED, as opposed to what is priced ──────────────────
+// The plan ceilings above are the commercial rule and they are right. They are
+// not what a request is judged by until someone can pay, and these are the
+// tests for that distinction.
+
+test("while billing is off, the enforced ceiling is the runaway stop", () => {
+  const c = enforcedCeiling(PLANS.free);
+  assert.equal(c.kind, BILLING_LIVE ? "plan" : "runaway");
+  if (!BILLING_LIVE) assert.equal(c.usd, RUNAWAY_CEILING_USD);
+});
+
+test("the runaway stop clears a real month on every plan, including Free", () => {
+  /* THE MEASURED CASE THIS EXISTS FOR. Every organization sits on the `free`
+     default nobody chose, and two had spent $6.71 and $4.73 this month against
+     a $9 Free ceiling. Enforcing the plan table would have refused both on the
+     first request — a permanent lockout, since there is no checkout to move
+     off Free. */
+  for (const mtd of [4.73, 6.71]) {
+    const v = spendGate(PLANS.free, mtd);
+    assert.equal(v.allow, true, `$${mtd} spent should not block a build`);
+  }
+});
+
+test("a genuine runaway is still stopped", () => {
+  // The thing the ceiling exists for: not a busy month, a loop.
+  const v = spendGate(PLANS.free, RUNAWAY_CEILING_USD + 1);
+  assert.equal(v.allow, false);
+});
+
+test("a runaway refusal never tells anyone to upgrade", () => {
+  /* There is no checkout. Advice to "move to a larger plan" would send someone
+     to a page that does not exist, and it would also be the wrong diagnosis —
+     reaching this means something is broken, not that someone is popular. */
+  const v = spendGate(PLANS.free, RUNAWAY_CEILING_USD + 1);
+  assert.equal(v.allow, false);
+  if (v.allow === false) {
+    assert.doesNotMatch(v.reason, /larger plan/);
+    assert.match(v.reason, /loop|leaked/);
+    assert.match(v.reason, /Analytics/, "the advice must name a screen that exists");
+  }
+});
+
+test("a plan refusal DOES name the way out, because there is one", () => {
+  const v = canStartBuild(PLANS.coach, PLANS.coach.ceilingUsd);
+  assert.equal(v.allow, false);
+  if (v.allow === false) assert.match(v.reason, /larger plan/);
+});
+
+test("a cheap operation is allowed where a full build would not be", () => {
+  // A QA pass costs cents. Refusing one because a BUILD would not fit is the
+  // difference between a working product and a locked one at the month's end.
+  const nearly = RUNAWAY_CEILING_USD - 2;
+  assert.equal(spendGate(PLANS.free, nearly).allow, false, "a build should not fit");
+  assert.equal(spendGate(PLANS.free, nearly, 0.5).allow, true, "a QA pass should");
+});
+
+test("the runaway stop is above every plan's typical month, or it fires first", () => {
+  /* If the tripwire sat below what a plan's included builds cost, the paid
+     tiers would be capped by the safety net rather than by what they bought —
+     the commercial ceiling would never be reached and the plan table would be
+     decoration. Only the two smallest plans need to fit today; the larger ones
+     are why BILLING_LIVE has to flip before they are sold. */
+  for (const p of [PLANS.free, PLANS.coach]) {
+    assert.ok(
+      RUNAWAY_CEILING_USD >= p.includedBuilds * TYPICAL_BUILD_USD,
+      `${p.label} would hit the runaway stop in a normal month`
+    );
+  }
 });

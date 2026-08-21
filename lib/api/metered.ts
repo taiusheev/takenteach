@@ -1,6 +1,57 @@
-import { logAiUsage, type Scope } from "@/lib/db";
+import { logAiUsage, orgSpendThisMonthUsd, type Scope } from "@/lib/db";
+import { getOrganization } from "@/lib/auth/store";
 import { budgetMode } from "@/lib/model-policy";
 import { usageBreakdown, withUsageMeter } from "@/lib/usage-meter";
+import { planFor, spendGate, type SpendVerdict } from "@/lib/spend-policy";
+
+/**
+ * MAY THIS ORGANIZATION SPEND ANY MORE THIS MONTH?
+ *
+ * ── THE HOLE THIS CLOSES ─────────────────────────────────────────────────
+ * `ai_usage` recorded every dollar and nothing ever read it back, so the only
+ * ceiling in the product was `MATERIAL_BUDGET_USD` — which caps ONE LESSON.
+ * A loop that spreads across lessons, or a leaked key, had no upper bound at
+ * all: each individual build looked reasonable and the month did not.
+ *
+ * ── ASKED BEFORE THE MONEY, NOT AFTER ────────────────────────────────────
+ * Separate from `metered()` on purpose, even though they are used together.
+ * `metered` wraps the call and reports what it cost; this decides whether to
+ * make it. Folding the check inside would mean the refusal could only be
+ * raised as an exception from inside a stream that has already started, which
+ * is exactly the half-finished failure the estimate exists to avoid.
+ *
+ * Two reads, both indexed. Worth it on an operation about to spend dollars.
+ */
+export async function checkSpend(
+  scope: Scope,
+  estimateUsd: number
+): Promise<SpendVerdict> {
+  const org = await getOrganization(scope.orgId);
+  /* A missing organization means the session outlived its org, which is not a
+     reason to hand out unlimited spend. `planFor` already falls back to the
+     most restrictive plan for anything it does not recognise. */
+  const plan = planFor(org?.plan);
+  return spendGate(plan, await orgSpendThisMonthUsd(scope.orgId), estimateUsd);
+}
+
+/**
+ * What each operation is expected to cost, for the pre-flight check.
+ *
+ * Deliberately the WORST case rather than the typical one — the check exists
+ * to stop something dying halfway, and a typical-case estimate approves
+ * exactly the requests that then run out. The build figure is the measured
+ * worst case from `lib/spend-policy.ts`; the rest are single calls against the
+ * pack's context and are an order of magnitude smaller.
+ */
+export const ESTIMATE_USD = {
+  build: 9,
+  qa: 0.5,
+  revise: 0.5,
+  section: 0.5,
+  design: 0.5,
+  plan: 0.1,
+  research: 0.1,
+} as const;
 
 /**
  * RUN AN AI OPERATION AND RECORD WHAT IT COST.

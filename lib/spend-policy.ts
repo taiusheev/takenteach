@@ -103,6 +103,64 @@ export type SpendVerdict =
   | { allow: true; warn?: string; remainingUsd: number }
   | { allow: false; reason: string; remainingUsd: 0 };
 
+/* ── WHAT IS ACTUALLY ENFORCED TODAY ────────────────────────────────────────
+   The plan ceilings above are the commercial rule and they are correct. They
+   are ALSO not the thing to enforce yet, and wiring them as-is would have been
+   a bug rather than a feature.
+
+   The reason is one sentence: THERE IS NO WAY TO PAY. No Stripe, no checkout,
+   nothing that can move an organization off the default plan. So a refusal
+   reading "Builds resume next month, or on a larger plan" is a lie — there is
+   no larger plan to move to — and a teacher who hits it is stopped
+   permanently, with no action available to them. That is strictly worse than
+   no limit at all, because at least an unbounded bill can be noticed and
+   fixed.
+
+   Measured, this was not hypothetical. Every organization in the database sits
+   on the `free` default that nobody chose, and two of them had already spent
+   $6.71 and $4.73 this month against a $9 free ceiling. Enforcing the plan
+   table would have locked both out of building on the first request.
+
+   So the ENFORCED limit is a runaway stop: high enough that no legitimate
+   month reaches it, low enough that a retry loop or a stolen key is caught the
+   same day. The commercial ceilings stay exactly where they are, fully tested,
+   and `BILLING_LIVE` is the one line that turns them on the day checkout
+   exists. */
+
+/**
+ * Is there a way for a customer to actually pay for more?
+ *
+ * Flip to `true` when checkout and the plan-change webhook are live. Nothing
+ * else needs to change: the plan ceilings are already the enforced ones from
+ * that moment on.
+ */
+export const BILLING_LIVE = false;
+
+/**
+ * The absolute monthly stop per organization, in model spend.
+ *
+ * Not a plan and not a budget to plan against — the tripwire. At a measured
+ * $5 typical build this is roughly a dozen lessons a month, well past any real
+ * teacher's use and well short of a loop that runs all night. It is the
+ * organization-level twin of `MATERIAL_BUDGET_USD`, which caps one LESSON and
+ * therefore cannot see a runaway that spreads across many.
+ */
+export const RUNAWAY_CEILING_USD = Number(process.env.ORG_BUDGET_USD ?? 60);
+
+export interface Ceiling {
+  usd: number;
+  /** "plan" once billing is live; "runaway" while it is not */
+  kind: "plan" | "runaway";
+  label: string;
+}
+
+/** The ceiling a request is actually judged against right now. */
+export function enforcedCeiling(plan: Plan): Ceiling {
+  return BILLING_LIVE
+    ? { usd: plan.ceilingUsd, kind: "plan", label: plan.label }
+    : { usd: RUNAWAY_CEILING_USD, kind: "runaway", label: plan.label };
+}
+
 /**
  * May this organization start another build?
  *
@@ -120,28 +178,69 @@ export function canStartBuild(
   monthToDateUsd: number,
   estimateUsd: number = WORST_BUILD_USD
 ): SpendVerdict {
-  const remaining = Math.max(0, plan.ceilingUsd - monthToDateUsd);
-  if (monthToDateUsd >= plan.ceilingUsd) {
+  return verdictFor(
+    { usd: plan.ceilingUsd, kind: "plan", label: plan.label },
+    monthToDateUsd,
+    estimateUsd
+  );
+}
+
+/**
+ * THE DECISION A REQUEST IS ACTUALLY JUDGED BY.
+ *
+ * Same arithmetic as `canStartBuild`, against `enforcedCeiling` rather than
+ * the plan's — see the block above for why those are different things until
+ * checkout exists. This is what routes call; `canStartBuild` is the commercial
+ * rule it becomes the day `BILLING_LIVE` flips.
+ */
+export function spendGate(
+  plan: Plan,
+  monthToDateUsd: number,
+  estimateUsd: number = WORST_BUILD_USD
+): SpendVerdict {
+  return verdictFor(enforcedCeiling(plan), monthToDateUsd, estimateUsd);
+}
+
+/**
+ * One implementation, two policies.
+ *
+ * The refusal wording differs by `kind` and that is the whole point: a plan
+ * ceiling is something a customer can act on ("move to a larger plan"), and a
+ * runaway stop is not — it means something has gone wrong, and telling someone
+ * to upgrade would send them to a checkout that does not exist.
+ */
+function verdictFor(
+  ceiling: Ceiling,
+  monthToDateUsd: number,
+  estimateUsd: number
+): SpendVerdict {
+  const remaining = Math.max(0, ceiling.usd - monthToDateUsd);
+  const wayOut =
+    ceiling.kind === "plan"
+      ? `Builds resume next month, or on a larger plan.`
+      : `Nothing should reach this in a normal month, so this usually means a build is retrying in a loop or a key has leaked. Check what spent it under Analytics before raising ORG_BUDGET_USD.`;
+
+  if (monthToDateUsd >= ceiling.usd) {
     return {
       allow: false,
-      reason: `This month's model spend has reached the ${plan.label} ceiling of $${plan.ceilingUsd}. Builds resume next month, or on a larger plan.`,
+      reason: `This month's AI spend has reached the $${ceiling.usd} limit for this organization. ${wayOut}`,
       remainingUsd: 0,
     };
   }
   if (remaining < estimateUsd) {
     return {
       allow: false,
-      reason: `Only $${remaining.toFixed(2)} of this month's ${plan.label} allowance is left, and a full build can cost up to $${estimateUsd.toFixed(2)}. Starting it would stop it partway through.`,
+      reason: `Only $${remaining.toFixed(2)} of this month's $${ceiling.usd} limit is left, and this can cost up to $${estimateUsd.toFixed(2)}. Starting it would stop it partway through. ${wayOut}`,
       remainingUsd: 0,
     };
   }
   // Warn at four-fifths, so a coach finds out before the prep period where it
   // would matter rather than during it.
-  if (monthToDateUsd > plan.ceilingUsd * 0.8) {
+  if (monthToDateUsd > ceiling.usd * 0.8) {
     return {
       allow: true,
       remainingUsd: remaining,
-      warn: `$${remaining.toFixed(2)} of this month's ${plan.label} allowance remains — about ${Math.floor(remaining / TYPICAL_BUILD_USD)} more build(s).`,
+      warn: `$${remaining.toFixed(2)} of this month's $${ceiling.usd} limit remains — about ${Math.floor(remaining / TYPICAL_BUILD_USD)} more build(s).`,
     };
   }
   return { allow: true, remainingUsd: remaining };

@@ -13,6 +13,7 @@ import { BUDGET_MODE_IDS, budgetMode, setBudgetMode } from "@/lib/model-policy";
 import { LessonPack } from "@/lib/lesson-pack-schema";
 import { loadEditableMaterial } from "@/lib/api/guards";
 import { badRequest, readBody } from "@/lib/api/request";
+import { checkSpend, ESTIMATE_USD } from "@/lib/api/metered";
 import {
   withUsageMeter,
   describeUsage,
@@ -155,6 +156,16 @@ export async function POST(
       `This lesson has already used ${alreadySpent.toFixed(2)} of AI budget, which is past the ${MATERIAL_BUDGET_USD.toFixed(2)} per-lesson limit. Everything built so far is saved and editable. Raise MATERIAL_BUDGET_USD if this lesson genuinely needs more.`
     );
   }
+
+  /* THE ORGANIZATION-LEVEL CEILING, which the per-lesson one above cannot see.
+     A runaway that spreads across many lessons — a retry loop, a leaked key —
+     leaves every individual lesson under its own limit while the month climbs
+     without bound. Checked here rather than inside the stream, because a
+     refusal has to arrive before the response starts: once the stream is open
+     the only way to report it is an error event in the middle of a build the
+     teacher is watching. */
+  const spend = await checkSpend(scope, ESTIMATE_USD.build);
+  if (!spend.allow) return badRequest(spend.reason);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
