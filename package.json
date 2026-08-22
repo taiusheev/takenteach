@@ -17,7 +17,8 @@
     "open:trial": "node --env-file-if-exists=.env.local --import ./scripts/test-resolver.mjs scripts/open-trial.mjs",
     "open:compare": "node --import ./scripts/test-resolver.mjs scripts/open-compare.mjs",
     "open:inspect": "node --import ./scripts/test-resolver.mjs scripts/open-inspect.mjs",
-    "db:backup": "node --env-file-if-exists=.env.local --import ./scripts/test-resolver.mjs scripts/backup-db.mjs"
+    "db:backup": "node --env-file-if-exists=.env.local --import ./scripts/test-resolver.mjs scripts/backup-db.mjs",
+    "db:restore": "node --env-file-if-exists=.env.local --import ./scripts/test-resolver.mjs scripts/db-restore.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.3",
