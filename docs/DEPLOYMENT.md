@@ -619,40 +619,137 @@ deployed instance, treat route-level loading fallbacks as unavailable.
 `components/shell/Sidebar.tsx`) — a per-link pending dot. Less capable, and it verifiably
 works. `error.tsx` and `not-found.tsx` are unaffected: neither introduces a Suspense
 boundary, and both are in use.
+## 8. Go live — the current checklist
 
-## 8. What I need from you
+**Everything on the code side is done and pushed.** What is left needs an account,
+a password, or a secret pasted into a form, so all of it is yours to run. Verified
+state as of the last commit:
 
-Nothing secret, ever — every key below is pasted by you into Vercel's or Supabase's own
-dashboard, not into this chat. **Steps 1–5 of the port are done; all four items below are
-now the only thing between the code and a live domain.** The ordered runbook is §7f.
-
-1. **A Supabase project** (free tier, region closest to your users). I need to know it
-   exists; you put the connection string in Vercel's env vars as `DATABASE_URL`.
-2. **A Resend account** with `takenteach.com` verified. That verification adds DNS
-   records at Cloudflare — Resend generates them per domain, so take the values from its
-   screen; §7f says where they go and that they must be grey-cloud.
-3. **Your `ANTHROPIC_API_KEY`** moved into Vercel's env vars. It is currently in
-   `.env.local`, which is gitignored and stays that way.
-4. **A decision on apex vs `app.`** — see §7. My recommendation is apex for the marketing
-   page, `app.` for the product.
-
-Also needed and not a secret: **a GitHub remote.** The repository is still local commits
-only, with nothing pushed anywhere.
-5. ~~**Confirmation on §6** (keep the existing auth) before I start step 2.~~ Step 2 is
-   done and it kept the existing auth, which was the recommendation and the lower-risk
-   path — the scrypt hashing, the session rows and the DAL all moved to Postgres
-   unchanged. If you would still rather have Supabase Auth, say so: it is now a
-   replacement of working code rather than a fork in the road, and §6 still argues
-   against it.
-
----
-
-## 9. Honest summary of cost
-
-| | Effort |
+| | |
 |---|---|
-| Postgres port ✅ | The bulk of it, and it landed in one session — mechanical and type-checked, as predicted. The cost was not the SQL; it was the four defects in §7a that types could not see. |
-| Staged generation | Smaller, more interesting, and improves the product for real users. |
-| De-globalising state | An afternoon, mostly deletion. |
-| Email + deploy config | Small. |
-| **Rebuilding the product** | **None.** Auth, tenancy, roles, the builder and the design system are all untouched. |
+| GitHub | ✅ `taiusheev/takenteach`, up to date — 152 files pushed |
+| Vercel | account exists (team `takenteach`), **no project imported** |
+| Supabase | account exists, **no project created** |
+| Cloudflare | signed out — `takenteach.com` not yet checked |
+| Resend | not yet checked |
+
+Production build succeeds, 392 tests pass, and the migration has been rehearsed
+against a copy of the last-deployed schema with real data in it (§8d).
+
+### 8a. Supabase — the database, before anything else
+
+Create the project, then take the **transaction pooler** string (port 6543) from
+Connect → Transaction pooler. Not the direct connection (5432): Vercel opens a
+connection per instance and the direct limit is reached almost immediately, which
+surfaces as unrelated-looking 500s. The direct host is also IPv6-only and Vercel
+is IPv4-only, so it is unreachable from there at all (§7f, failure 3).
+
+Ignore the banner on that tab claiming the transaction pooler needs an IPv4
+add-on. For the shared pooler it is not true — the hostname resolves IPv4-only.
+
+Then, locally, with that string in `.env.local` as `DATABASE_URL`:
+
+```
+npm run db:migrate && npm run db:import
+```
+
+Both read `.env.local`, so the credential never reaches a shell history. Do this
+**before** the first deploy, so the site is never live against empty tables.
+`db:import` refuses a non-empty target and verifies every table count by reading
+it back.
+
+### 8b. Vercel — the app
+
+Import the repo. Framework and build command are detected; `npm run build` is
+already pinned to webpack, because Turbopack cannot resolve `next/font/google`
+and fails 100% of the time on Vercel while passing intermittently in local runs.
+
+Environment variables — the four that are required, and one worth setting
+deliberately:
+
+| | |
+|---|---|
+| `DATABASE_URL` | the pooler string from 8a |
+| `ANTHROPIC_API_KEY` | from your `.env.local` |
+| `RESEND_API_KEY` | from 8c |
+| `MAIL_FROM` | `TakenTeach <noreply@takenteach.com>` |
+| `ORG_BUDGET_USD` | see the warning below |
+
+**Do NOT set `PGLITE_PATH`.** With no `DATABASE_URL` the app refuses to start in
+production rather than coming up against an empty in-memory database — which is
+the failure that would otherwise look exactly like every lesson having vanished.
+
+**Do NOT set `OPEN_MODEL_TASKS`.** It silently moves build stages onto an
+open-weight model. No error, no banner; the only visible difference is the model
+name in the cost view and the quality of the lesson.
+
+⚠️ **`ORG_BUDGET_USD` defaults to $60 per organization per month, and signup is
+open.** Until billing exists this is the only enforced ceiling — the sole thing
+between a leaked key, or a stranger with a browser, and an unbounded Anthropic
+bill. On a public domain that is $60 of exposure per account created. Decide the
+number deliberately rather than inheriting it; $15 is a more defensible starting
+point for a public launch, and it still clears two full builds.
+
+### 8c. Resend — email
+
+Add `takenteach.com` and let Resend generate its records: a DKIM `TXT`, an SPF
+`TXT`, and an MX for the bounce subdomain. Take the values from its screen, add
+them at Cloudflare as **DNS-only (grey cloud)**. Prove delivery before relying
+on it:
+
+```
+MAIL_FORCE_SEND=1 npm run dev
+```
+
+then use Forgot Password against your own address.
+
+### 8d. Cloudflare — DNS
+
+Recommended split: apex for a marketing page, `app.` for the product.
+
+| type | name | value |
+|---|---|---|
+| `CNAME` | `app` | take the exact target from Vercel's domain screen |
+
+**Every Vercel record must be DNS-only (grey cloud).** Proxying through
+Cloudflare on top of Vercel causes redirect loops and breaks certificate
+issuance. It is the single most common way this deploy goes wrong.
+
+### 8e. Verify, in this order
+
+Each step depends on the one before it:
+
+1. sign in
+2. the library lists the imported packs
+3. open one
+4. print view renders
+5. Forgot Password arrives in a real inbox
+
+### 8f. What the migration will do to your data
+
+Rehearsed, not assumed. A database was built on the schema as last deployed
+(`8edd812`), given a real organization, user, style kit, material and a $4.93
+usage row, and then migrated:
+
+- `teaching_log` created
+- `users.style_profile` added
+- every existing row intact, spend intact
+- the `ai_usage` foreign key repaired, so deleting a lesson that has cost money
+  now succeeds and keeps the spend as history
+
+`ensureSchema()` ran twice without error, because `db:migrate` may be re-run.
+
+### 8g. Known limits, unchanged
+
+**Building a pack on the free tier is the one thing that will disappoint.** A
+build is 7–22 minutes; it runs in resumable legs and degrades rather than
+failing, but a slow stage can still stall against a tight function ceiling. For
+a demo, build locally — where there is no timeout — and let the deployment serve
+the library.
+
+**Vercel Hobby is non-commercial.** The day a school pays, the deployment needs
+Pro. No code changes; it simply is not true that "$0/month" and "charging
+schools" hold at the same time.
+
+**The overnight batch runner cannot work on serverless** (§4) and should not be
+exercised on the deployment.
