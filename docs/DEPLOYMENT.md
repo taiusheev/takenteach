@@ -753,3 +753,88 @@ schools" hold at the same time.
 
 **The overnight batch runner cannot work on serverless** (§4) and should not be
 exercised on the deployment.
+
+---
+
+## 9. Free hosting — what is actually available, and what it costs you
+
+Researched August 2026, against this app's real constraints: Next.js 16 SSR,
+Postgres, build legs that want a long request, and — the one that eliminates
+most options — **commercial use permitted**, because the point is to charge
+schools.
+
+### 9a. The database question is settled, and it is a free upgrade
+
+**Move from Supabase to Neon.** Both are free; Neon is strictly better here.
+
+| | Supabase free | Neon free |
+|---|---|---|
+| commercial use | allowed | allowed |
+| storage | 500 MB | 0.5 GB per project |
+| idle behaviour | **project PAUSES after 7 days**, manual restore | scale-to-zero, cold start typically <500 ms |
+| expiry | restorable 90 days after pause, then backup-only | none |
+| TLS | cert does not chain to a public CA | chains normally |
+
+The pause is the decisive difference. Early traffic is sporadic by definition —
+a fortnight between demos is normal — and Supabase's answer to that is a paused
+project and a site that is down until someone notices. Neon's answer is a
+half-second on the first query.
+
+The library is 1.8 MB, so 0.5 GB is roughly 250× headroom either way.
+
+**No code change is needed.** `lib/pg.ts` takes a connection string and nothing
+else; the Supabase-specific parts were comments and one TLS workaround, which
+is now applied only to Supabase hosts rather than to everyone (`PGSSL_NO_VERIFY=1`
+is the escape hatch for anything else that needs it).
+
+### 9b. The app itself has no free answer that is also good
+
+| | free? | commercial? | the catch |
+|---|---|---|---|
+| **Vercel Hobby** | yes | **no — banned** | perfect fit technically; illegal the day a school pays |
+| **Cloudflare Workers** | yes | yes | **10 ms CPU per request** on free. Waiting on the model does not count, but SSR is real CPU work — and it needs the OpenNext adapter plus an HTTP Postgres driver |
+| **Render free** | yes | yes | 512 MB / 0.1 CPU, spins down after 15 min, **30–60 s cold start**, and its free Postgres expires |
+| **Netlify free** | yes | yes | 10 s function limit — shorter than one build stage |
+
+Vercel Hobby is the best technical fit and the one you cannot legally keep. The
+others each break something this app needs.
+
+### 9c. The option that actually fits, for now
+
+**Run it on your own machine and put it on the domain with a Cloudflare
+Tunnel.** As of July 2026 Tunnel is free outright — unlimited tunnels and
+requests — and it only requires the domain to be on Cloudflare DNS, which
+`takenteach.com` already is.
+
+What that buys, beyond the $0:
+
+- **No function timeout at all.** A 22-minute build runs in one request. The
+  whole build-leg mechanism becomes an optimisation rather than a necessity,
+  and §8g's warning ("building on the free tier will disappoint") stops
+  applying.
+- No cold starts, no spin-down, no commercial-use clause.
+- The overnight batch runner — currently unusable on serverless (§4) — works,
+  which is a real 50% discount on AI spend.
+
+What it costs: the machine has to be on, it is your home connection, and there
+is no redundancy. That is an entirely reasonable trade for the founder-plus-
+design-partners stage, and a bad one for a public product with paying schools.
+
+`docs/RUNNING.md` already documents running it locally as an always-on app; the
+tunnel is the one piece that puts it on the domain.
+
+### 9d. The number that makes this decision smaller than it looks
+
+Hosting is not the expensive part. **AI is ~$5 per build.** At even five builds
+a month that is $25 — more than Vercel Pro. At the volume that would justify
+worrying about hosting, model spend is several times it.
+
+So the honest ranking is:
+
+1. **Now:** self-host + Cloudflare Tunnel + Neon. $0, no timeout, commercial
+   use fine, and it removes the free-tier limitation that hurts most.
+2. **The day a school pays:** Vercel Pro at $20/month, which the pricing in
+   §02 of the business plan earns back on two lessons.
+3. **Never worth it:** contorting the app onto Workers' 10 ms CPU budget, or
+   accepting a 60-second cold start on Render, to avoid $20 a month while
+   spending hundreds on model calls.

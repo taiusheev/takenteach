@@ -244,6 +244,17 @@ async function createDriver(): Promise<Driver> {
     return pgliteDriver(pglitePath ?? "memory://");
   }
 
+/**
+ * Which providers need TLS verification turned off, and nothing else does.
+ *
+ * Supabase is the one in use today. Kept as a list rather than a boolean so
+ * adding a provider is a one-word change and the reason stays attached to it.
+ */
+function needsUnverifiedTls(url: string): boolean {
+  if (process.env.PGSSL_NO_VERIFY === "1") return true;
+  return /supabase.(co|com|net)/i.test(url);
+}
+
   const { Pool, types } = await import("pg");
   const local = /localhost|127\.0\.0\.1/.test(url);
 
@@ -264,12 +275,20 @@ async function createDriver(): Promise<Driver> {
     max: 1,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 10_000,
-    /* Supabase terminates TLS with a certificate Node's default trust store
-       does not chain to, so verification is off. That encrypts the connection
-       but does not authenticate the server — acceptable for an MVP, and the
-       way to harden it is to download Supabase's CA and pass `ca:` here rather
-       than to leave this comment unread. */
-    ssl: local ? undefined : { rejectUnauthorized: false },
+    /* TLS VERIFICATION IS ON UNLESS THE PROVIDER CANNOT SUPPORT IT.
+       It used to be off for everyone, because Supabase terminates TLS with a
+       certificate Node's default trust store does not chain to. That encrypts
+       the connection without authenticating the server, and it was applied to
+       every provider rather than the one that needs it.
+
+       Neon — and most managed Postgres — present certificates that chain to a
+       public CA, so verification simply works there and turning it off would
+       be giving up something for nothing. Detected from the host rather than
+       configured, so nobody has to know this to deploy; `PGSSL_NO_VERIFY=1`
+       is the manual escape hatch for a provider not covered here. */
+    ssl: local
+      ? undefined
+      : { rejectUnauthorized: !needsUnverifiedTls(url) },
   });
 
   return pgDriver(pool);
