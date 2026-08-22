@@ -838,3 +838,101 @@ So the honest ranking is:
 3. **Never worth it:** contorting the app onto Workers' 10 ms CPU budget, or
    accepting a 60-second cold start on Render, to avoid $20 a month while
    spending hundreds on model calls.
+
+---
+
+## 10. Going live: self-host + Cloudflare Tunnel
+
+The chosen shape (§9c). The app runs on this machine; a Cloudflare Tunnel makes
+an **outbound** connection and publishes it at `app.takenteach.com`. Nothing is
+opened on the router, the home IP is never exposed, and there is no function
+timeout — so a 22-minute build runs in one request and the overnight batch
+runner becomes usable.
+
+### 10a. Already done
+
+- `cloudflared` 2026.8.2 in `.tools/`, Authenticode signature verified as
+  Cloudflare's. Gitignored: it is 52 MB and a machine-local concern.
+- `scripts/live.bat` — starts the app and the tunnel together, finding the
+  binary in `.tools/` or on PATH.
+- `scripts/stop.bat` — stops both. `live.bat`'s window owns only the tunnel, so
+  closing it would leave the app running invisibly; that is the state where "up"
+  and "down" look identical from this machine.
+- `npm run db:backup` — a real backup of the **live** database, whichever it is.
+  `scripts/backup.mjs` still snapshots `data/ascent.db`, which has not been live
+  since the Postgres port; it reports success and contains nothing recent, which
+  is the worst kind of backup.
+
+### 10b. Two steps that need you, and why
+
+Neither can be delegated, and the reason is the same in both cases: they are the
+points where the deployment proves it is *you*.
+
+**1. Authorise the tunnel.** Opens a browser, asks you to sign in and pick the
+`takenteach.com` zone, and writes a certificate to `%USERPROFILE%\.cloudflared`.
+
+```
+C:\AscentSite\.tools\cloudflared.exe tunnel login
+```
+
+**2. The database.** Create a Neon project at neon.tech, copy the **pooled**
+connection string, then — so the credential goes straight to the file and
+through no chat window or shell history:
+
+```
+powershell -NoProfile -Command "$k = Read-Host 'Paste your Neon connection string'; Add-Content C:\AscentSite\.env.local ('DATABASE_URL=' + $k) -Encoding utf8; 'written'"
+```
+
+Then remove or comment out `PGLITE_PATH` in `.env.local`, so there is one
+obvious answer to which database is live.
+
+### 10c. Everything after that
+
+Once step 1 is done these can be run for you, or by you:
+
+```
+.tools\cloudflared.exe tunnel create takenteach
+.tools\cloudflared.exe tunnel route dns takenteach app.takenteach.com
+```
+
+`route dns` writes the CNAME at Cloudflare itself — no manual DNS record, and no
+grey-cloud mistake to make, because a tunnel route is not proxied in the way
+§7f warns about.
+
+With a Neon `DATABASE_URL` set, move the library across:
+
+```
+npm run db:migrate
+npm run db:import
+```
+
+`db:import` refuses a non-empty target and verifies every table count by reading
+it back. Then:
+
+```
+scripts\live.bat
+```
+
+### 10d. You can be live after step 1 alone
+
+Worth knowing before deciding how much of an evening this needs. **The database
+does not block going live.** `.pglite` is a real, persistent Postgres — the
+production guard in `lib/pg.ts` distinguishes a persistent directory from an
+in-memory one precisely so this launcher works — and it holds the whole library
+today: 16 materials, 149 activity rows, 3 organizations.
+
+So the honest sequence is: do the tunnel login, run `live.bat`, and the site is
+on the domain tonight. Move to Neon when you have twenty minutes, for the reason
+that actually matters — **the library currently exists on one disk**. `npm run
+db:backup` closes the immediate risk; Neon closes it properly.
+
+### 10e. Always-on
+
+Same trick as `ascent-hidden.vbs`, pointed at `live.bat`: put a shortcut in the
+Startup folder (`Win+R` → `shell:startup`). The site is then up whenever you are
+logged in.
+
+What this costs, stated plainly: the machine has to be on, it is your home
+connection, and there is no redundancy. Right for the founder-and-design-partners
+stage, wrong for a public product with paying schools — at which point §8's
+Vercel path is waiting, and nothing about the app has to change to take it.
